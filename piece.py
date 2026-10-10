@@ -1,4 +1,5 @@
 from move import Move
+from board import Board
 
 class Piece:
     """Arguments: piece \"Q\", Upper means White, Lower means Black
@@ -15,3 +16,26 @@ class Piece:
                 return True
             else:
                 return False
+        if self.type == "p":
+            if move.from_column != move.to_column:
+                return False
+            if board[move.to_row][move.to_column] != "":
+                return False
+            if self.color:
+                if move.from_row == 6:
+                    return (move.to_row >= 4 and move.to_row <= 5)
+                else:
+                    if move.from_row >= 1 and move.from_row <= 5:
+                        return (move.from_row - move.to_row == 1)
+                    else:
+                        return False
+
+            else:
+                if move.from_row == 1:
+                    return (move.to_row >= 2 and move.to_row <= 3)
+                else:
+                    if move.from_row >= 2 and move.from_row <= 6:
+                        return (move.to_row - move.from_row == 1)
+                    else:
+                        return False
+
