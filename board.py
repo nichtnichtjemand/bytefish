@@ -44,11 +44,9 @@ class Board:
                 return ValueError("Colors of start and end pieces can't be the same")
         if from_piece.color != self.current_turn:
             return ValueError("It's not this color's turn")
-
+        if from_column == to_column and from_row == to_row:
+            return ValueError("The start and end piece coordinates are the same")
+        
         self.board[to_row][to_column] = from_piece
         self.board[from_row][from_column] = ""
         self.current_turn = False if self.current_turn else True
-        
-        
-    
-
