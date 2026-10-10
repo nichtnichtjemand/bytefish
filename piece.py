@@ -55,3 +55,10 @@ class Piece:
             column_diff = abs(move.from_column - move.to_column)
 
             return ((row_diff == column_diff) and (row_diff >= 1)) or (move.from_row == move.to_row and move.from_column != move.to_column) or (move.from_row != move.to_row and move.from_column == move.to_column)
+
+        if self.type == "k":
+
+            row_diff = abs(move.from_row - move.to_row)
+            column_diff = abs(move.from_column - move.to_column)
+
+            return (row_diff <= 1 and column_diff <=1 and row_diff + column_diff >= 1)
