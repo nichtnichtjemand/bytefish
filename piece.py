@@ -16,6 +16,7 @@ class Piece:
                 return True
             else:
                 return False
+            
         if self.type == "p":
             if move.from_column != move.to_column:
                 return False
@@ -38,4 +39,10 @@ class Piece:
                         return (move.to_row - move.from_row == 1)
                     else:
                         return False
+
+        if self.type == "b":
+            row_diff = abs(move.from_row - move.to_row)
+            column_diff = abs(move.from_column - move.to_column)
+
+            return (row_diff == column_diff) and (row_diff >= 1)
 
