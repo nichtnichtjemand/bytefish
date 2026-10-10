@@ -14,6 +14,7 @@ class Board:
                         ["P", "P", "P", "P", "P", "P", "P", "P"],
                         ["R", "N", "B", "Q", "K", "B", "N", "R"]
         ]
+        self.current_turn = True # True = White, False = Black
         self.board = []
         for row in setup:
             new_row = []
@@ -34,12 +35,19 @@ class Board:
         to_column = ord(move.to_field[0].lower()) - ord("a")
         to_row = 8 - int(move.to_field[1])
 
-        piece = self.board[from_row][from_column]
-        if piece == "":
-            return ValueError(f"The field is empty: {piece}")
+        from_piece = self.board[from_row][from_column]
+        to_piece = self.board[to_row][to_column]
+        if from_piece == "":
+            return ValueError(f"The field is empty")
+        if to_piece != "":
+            if from_piece.color == to_piece.color:
+                return ValueError("Colors of start and end pieces can't be the same")
+        if from_piece.color != self.current_turn:
+            return ValueError("It's not this color's turn")
 
-        self.board[to_row][to_column] = piece
+        self.board[to_row][to_column] = from_piece
         self.board[from_row][from_column] = ""
+        self.current_turn = False if self.current_turn else True
         
         
     
