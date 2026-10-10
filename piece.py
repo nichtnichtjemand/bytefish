@@ -12,12 +12,14 @@ class Piece:
 
     def is_legal_move(self, board, move: Move):
         if self.type == "r":
+
             if (move.from_row == move.to_row and move.from_column != move.to_column) or (move.from_row != move.to_row and move.from_column == move.to_column):
                 return True
             else:
                 return False
             
         if self.type == "p":
+
             if move.from_column != move.to_column:
                 return False
             if board[move.to_row][move.to_column] != "":
@@ -41,8 +43,15 @@ class Piece:
                         return False
 
         if self.type == "b":
+
             row_diff = abs(move.from_row - move.to_row)
             column_diff = abs(move.from_column - move.to_column)
 
             return (row_diff == column_diff) and (row_diff >= 1)
 
+        if self.type == "q":
+
+            row_diff = abs(move.from_row - move.to_row)
+            column_diff = abs(move.from_column - move.to_column)
+
+            return ((row_diff == column_diff) and (row_diff >= 1)) or (move.from_row == move.to_row and move.from_column != move.to_column) or (move.from_row != move.to_row and move.from_column == move.to_column)
