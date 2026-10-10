@@ -35,6 +35,8 @@ class Board:
         to_row = 8 - int(move.to_field[1])
 
         piece = self.board[from_row][from_column]
+        if piece == "":
+            return ValueError(f"The field is empty: {piece}")
 
         self.board[to_row][to_column] = piece
         self.board[from_row][from_column] = ""
