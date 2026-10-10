@@ -1,9 +1,10 @@
 from move import Move
+from piece import Piece
 
 class Board:
 
     def __init__(self):
-        self.board = [
+        setup = [
                         ["r", "n", "b", "q", "k", "b", "n", "r"],
                         ["p", "p", "p", "p", "p", "p", "p", "p"],
                         ["",  "",  "",  "",  "",  "",  "",  "" ],
@@ -13,6 +14,17 @@ class Board:
                         ["P", "P", "P", "P", "P", "P", "P", "P"],
                         ["R", "N", "B", "Q", "K", "B", "N", "R"]
         ]
+        self.board = []
+        for row in setup:
+            new_row = []
+            for char in row:
+                if char != "":
+                    new_row.append(Piece(char))
+                else:
+                    new_row.append("")
+            self.board.append(new_row)
+
+
 
     def move(self, move: Move):
 
