@@ -1,5 +1,4 @@
 from move import Move
-from board import Board
 
 class Piece:
     """Arguments: piece \"Q\", Upper means White, Lower means Black
@@ -103,3 +102,4 @@ class Piece:
             column += col_step
 
         return True
+    
