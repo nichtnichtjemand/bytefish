@@ -29,11 +29,22 @@ class Board:
 
     def move(self, move: Move):
 
-        from_column = ord(move.from_field[0].lower()) - ord("a")
-        from_row = 8 - int(move.from_field[1])
+        
+        if (
+            move.from_row < 0 or move.from_row > 7 or
+            move.from_column < 0 or move.from_column > 7 or
+            move.to_row < 0 or move.to_row > 7 or
+            move.to_column < 0 or move.to_column > 7
+        ):
+            return ValueError("Koordinaten außerhalb des Bretts")
 
-        to_column = ord(move.to_field[0].lower()) - ord("a")
-        to_row = 8 - int(move.to_field[1])
+        from_column = move.from_column
+        from_row = move.from_row
+        to_column = move.to_column
+        to_row = move.to_row
+
+        if (move.from_row < 0) or (move.to_row < 0) or (move.from_column < 0) or (move.to_column < 0) or (move.from_row > 7) or (move.to_row > 7) or (move.from_column > 7) or (move.to_column > 7):
+            return False
 
         from_piece = self.board[from_row][from_column]
         to_piece = self.board[to_row][to_column]

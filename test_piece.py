@@ -93,8 +93,171 @@ def test_bishop_can_capture_enemy_piece(empty_board):
 
 
 # ─────────────────────────────────────────
-# Brettinitialisierung
+# Turm (Rook): gültige und ungültige Züge
 # ─────────────────────────────────────────
+
+@pytest.mark.parametrize(
+    ("start", "end"),
+    [
+        ("a1", "a8"),
+        ("a1", "h1"),
+        ("d4", "d8"),
+        ("d4", "a4"),
+    ],
+)
+def test_rook_valid_moves(empty_board, start, end):
+    rook = Piece("R")
+    move = Move(start, end)
+    assert rook.is_legal_move(empty_board, move) is True
+
+
+@pytest.mark.parametrize(
+    ("start", "end"),
+    [
+        ("a1", "b2"),
+        ("d4", "e6"),
+        ("a1", "a1"),
+    ],
+)
+def test_rook_invalid_moves(empty_board, start, end):
+    rook = Piece("R")
+    move = Move(start, end)
+    assert rook.is_legal_move(empty_board, move) is False
+
+
+# ─────────────────────────────────────────
+# Springer (Knight): gültige und ungültige Züge
+# ─────────────────────────────────────────
+
+@pytest.mark.parametrize(
+    ("start", "end"),
+    [
+        ("b1", "c3"),
+        ("b1", "a3"),
+        ("d4", "e6"),
+        ("d4", "b5"),
+        ("d4", "f3"),
+    ],
+)
+def test_knight_valid_moves(empty_board, start, end):
+    knight = Piece("N")
+    move = Move(start, end)
+    assert knight.is_legal_move(empty_board, move) is True
+
+
+@pytest.mark.parametrize(
+    ("start", "end"),
+    [
+        ("b1", "b3"),
+        ("d4", "d6"),
+        ("b1", "d4"),
+    ],
+)
+def test_knight_invalid_moves(empty_board, start, end):
+    knight = Piece("N")
+    move = Move(start, end)
+    assert knight.is_legal_move(empty_board, move) is False
+
+
+# ─────────────────────────────────────────
+# Dame (Queen): Kombination aus Turm und Läufer
+# ─────────────────────────────────────────
+
+@pytest.mark.parametrize(
+    ("start", "end"),
+    [
+        ("d1", "d8"),
+        ("d1", "h5"),
+        ("d1", "a4"),
+        ("d1", "d2"),
+    ],
+)
+def test_queen_valid_moves(empty_board, start, end):
+    queen = Piece("Q")
+    move = Move(start, end)
+    assert queen.is_legal_move(empty_board, move) is True
+
+
+@pytest.mark.parametrize(
+    ("start", "end"),
+    [
+        ("d1", "f4"),
+        ("d1", "c3"),
+    ],
+)
+def test_queen_invalid_moves(empty_board, start, end):
+    queen = Piece("Q")
+    move = Move(start, end)
+    assert queen.is_legal_move(empty_board, move) is False
+
+
+
+@pytest.mark.parametrize(
+    ("start", "end"),
+    [
+        ("e1", "e2"),
+        ("e1", "f1"),
+        ("e1", "f2"),
+        ("d4", "c5"),
+    ],
+)
+def test_king_valid_moves(empty_board, start, end):
+    king = Piece("K")
+    move = Move(start, end)
+    assert king.is_legal_move(empty_board, move) is True
+
+
+@pytest.mark.parametrize(
+    ("start", "end"),
+    [
+        ("e1", "e3"),
+        ("e1", "g1"),
+        ("d4", "d6"),
+    ],
+)
+def test_king_invalid_moves(empty_board, start, end):
+    king = Piece("K")
+    move = Move(start, end)
+    assert king.is_legal_move(empty_board, move) is False
+
+
+@pytest.mark.parametrize(
+    ("start", "end", "is_white"),
+    [
+        ("e2", "e3", True),
+        ("e2", "e4", True),
+        ("e7", "e6", False),
+        ("e7", "e5", False),
+    ],
+)
+def test_pawn_forward_moves(empty_board, start, end, is_white):
+    pawn_symbol = "P" if is_white else "p"
+    pawn = Piece(pawn_symbol)
+    move = Move(start, end)
+    assert pawn.is_legal_move(empty_board, move) is True
+
+
+def test_pawn_diagonal_capture_valid(empty_board):
+    white_pawn = Piece("P")
+    
+    empty_board.board[3][3] = Piece("p") 
+    
+    empty_board.board[4][2] = white_pawn
+    
+    move = Move("c4", "d5")
+    
+    assert white_pawn.is_legal_move(empty_board, move) is True
+
+
+
+def test_rook_blocked_by_piece(empty_board):
+    rook = Piece("R")
+    empty_board.board[7][4] = Piece("P") 
+    
+    move = Move("a1", "h1")
+    assert rook.is_legal_move(empty_board, move) is False
+
+
 
 def test_board_starts_with_32_pieces(board):
     pieces = [
@@ -111,9 +274,6 @@ def test_board_starts_with_white_to_move(board):
     assert board.current_turn is True
 
 
-# ─────────────────────────────────────────
-# Board.move(): Fehlerfälle
-# ─────────────────────────────────────────
 
 def test_move_rejects_empty_start_field(board):
     result = board.move(Move("e4", "e5"))
@@ -133,9 +293,19 @@ def test_move_rejects_same_field(board):
     assert isinstance(result, ValueError)
 
 
-# ─────────────────────────────────────────
-# Board.move(): erfolgreicher Zug
-# ─────────────────────────────────────────
+@pytest.mark.parametrize(
+    ("start", "end"),
+    [
+        ("i9", "e4"),
+        ("e2", "x9"),
+        ("z0", "y1"),
+    ],
+)
+def test_move_rejects_out_of_bounds(board, start, end):
+    result = board.move(Move(start, end))
+    assert isinstance(result, ValueError)
+
+
 
 def test_move_changes_board_and_turn(board):
     white_pawn = board.board[6][4]

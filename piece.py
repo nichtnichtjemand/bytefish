@@ -18,6 +18,10 @@ class Piece:
         ):
             return False
 
+        if (move.from_row < 0) or (move.to_row < 0) or (move.from_column < 0) or (move.to_column < 0) or (move.from_row > 7) or (move.to_row > 7) or (move.from_column > 7) or (move.to_column > 7):
+            return False
+
+
         target = board.board[move.to_row][move.to_column]
 
         if target != "" and target.color == self.color:
@@ -128,9 +132,7 @@ class Piece:
 
         if self.type == "n":
             row_diff = abs(move.from_row - move.to_row)
-            column_diff = abs(
-                move.from_column - move.from_column
-            )
+            column_diff = abs(move.from_column - move.to_column)
 
             return (
                 (row_diff == 1 and column_diff == 2)
