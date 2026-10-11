@@ -1,100 +1,162 @@
 from move import Move
 
+
 class Piece:
-    """Arguments: piece \"Q\", Upper means White, Lower means Black
-    self.color: True = White, False = Black"""
+
     def __init__(self, piece):
-        self.color = (piece != piece.lower())
+        self.color = piece != piece.lower()
         self.piece = piece
         self.type = piece.lower()
 
-
     def is_legal_move(self, board, move: Move):
 
-        if board.board[move.to_row][move.to_column] != "":
-            if board.board[move.to_row][move.to_column].color == board.current_turn:
-                return False 
+        if not (
+            0 <= move.from_row < 8
+            and 0 <= move.from_column < 8
+            and 0 <= move.to_row < 8
+            and 0 <= move.to_column < 8
+        ):
+            return False
 
+        target = board.board[move.to_row][move.to_column]
+
+        if target != "" and target.color == self.color:
+            return False
 
         if self.type == "r":
+            if (
+                (
+                    move.from_row == move.to_row
+                    and move.from_column != move.to_column
+                )
+                or (
+                    move.from_row != move.to_row
+                    and move.from_column == move.to_column
+                )
+            ):
+                return self._is_path_clear(board, move)
 
-            if (move.from_row == move.to_row and move.from_column != move.to_column) or (move.from_row != move.to_row and move.from_column == move.to_column):
-                if not self._is_path_clear(board, move):
-                    return False
-                return True
-            else:
-                return False
+            return False
 
-
-            
         if self.type == "p":
 
-            if move.from_column != move.to_column:
-                return False
-            if board.board[move.to_row][move.to_column] != "":
-                return False
-            if self.color:
-                if move.from_row == 6:
-                    return (move.to_row >= 4 and move.to_row <= 5)
-                else:
-                    if move.from_row >= 1 and move.from_row <= 5:
-                        return (move.from_row - move.to_row == 1)
-                    else:
-                        return False
+            direction = -1 if self.color else 1
 
-            else:
-                if move.from_row == 1:
-                    return (move.to_row >= 2 and move.to_row <= 3)
-                else:
-                    if move.from_row >= 2 and move.from_row <= 6:
-                        return (move.to_row - move.from_row == 1)
-                    else:
-                        return False
+            start_row = 6 if self.color else 1
+
+            row_diff = move.to_row - move.from_row
+            column_diff = abs(
+                move.to_column - move.from_column
+            )
+
+            if column_diff == 0:
+
+                if target != "":
+                    return False
+
+                if row_diff == direction:
+                    return True
+
+                if (
+                    move.from_row == start_row
+                    and row_diff == 2 * direction
+                ):
+                    middle_row = move.from_row + direction
+
+                    return (
+                        board.board[middle_row][move.from_column] == ""
+                    )
+
+                return False
+
+            if column_diff == 1 and row_diff == direction:
+                return (
+                    target != ""
+                    and target.color != self.color
+                )
+
+            return False
 
         if self.type == "b":
-
             row_diff = abs(move.from_row - move.to_row)
-            column_diff = abs(move.from_column - move.to_column)
+            column_diff = abs(
+                move.from_column - move.to_column
+            )
 
-            if (row_diff == column_diff) and (row_diff >= 1):
+            if row_diff == column_diff and row_diff >= 1:
                 return self._is_path_clear(board, move)
-            else:
-                return False
-                 
+
+            return False
 
         if self.type == "q":
-
             row_diff = abs(move.from_row - move.to_row)
-            column_diff = abs(move.from_column - move.to_column)
+            column_diff = abs(
+                move.from_column - move.to_column
+            )
 
-            if ((row_diff == column_diff) and (row_diff >= 1)) or (move.from_row == move.to_row and move.from_column != move.to_column) or (move.from_row != move.to_row and move.from_column == move.to_column):
+            is_diagonal = (
+                row_diff == column_diff and row_diff >= 1
+            )
+
+            is_straight = (
+                (
+                    move.from_row == move.to_row
+                    and move.from_column != move.to_column
+                )
+                or (
+                    move.from_row != move.to_row
+                    and move.from_column == move.to_column
+                )
+            )
+
+            if is_diagonal or is_straight:
                 return self._is_path_clear(board, move)
-            else:
-                return False
 
-        if self.type == "k":
-
-            row_diff = abs(move.from_row - move.to_row)
-            column_diff = abs(move.from_column - move.to_column)
-
-            return (row_diff <= 1 and column_diff <=1 and row_diff + column_diff >= 1)
+            return False
         
-        if self.type == "n":
-
+        if self.type == "k":
             row_diff = abs(move.from_row - move.to_row)
-            column_diff = abs(move.from_column - move.to_column)
+            column_diff = abs(
+                move.from_column - move.to_column
+            )
 
-            return (row_diff == 1 and column_diff == 2) or (row_diff == 2 and column_diff == 1)
+            return (
+                row_diff <= 1
+                and column_diff <= 1
+                and row_diff + column_diff >= 1
+            )
 
+        if self.type == "n":
+            row_diff = abs(move.from_row - move.to_row)
+            column_diff = abs(
+                move.from_column - move.from_column
+            )
+
+            return (
+                (row_diff == 1 and column_diff == 2)
+                or (row_diff == 2 and column_diff == 1)
+            )
+
+        return False
 
     def _is_path_clear(self, board, move):
-        row_step = (move.to_row > move.from_row) - (move.to_row < move.from_row)
-        col_step = (move.to_column > move.from_column) - (move.to_column < move.from_column)
+        row_step = (
+            (move.to_row > move.from_row)
+            - (move.to_row < move.from_row)
+        )
+
+        col_step = (
+            (move.to_column > move.from_column)
+            - (move.to_column < move.from_column)
+        )
 
         row = move.from_row + row_step
         column = move.from_column + col_step
 
-        while (row, column) != (move.to_row, move.to_column):
+        while (row, column) != (
+            move.to_row,
+            move.to_column
+        ):
             if board.board[row][column] != "":
                 return False
 
@@ -102,4 +164,3 @@ class Piece:
             column += col_step
 
         return True
-    
