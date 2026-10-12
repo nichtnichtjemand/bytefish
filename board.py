@@ -18,6 +18,7 @@ class Board:
                         ["R", "N", "B", "Q", "K", "B", "N", "R"]
         ]
         self.current_turn = True # True = White, False = Black
+        self.history = {}
         self.board = []
         for row in setup:
             new_row = []
@@ -100,7 +101,9 @@ class Board:
         return rating
 
     def copy(self):
-        return deepcopy(self)
+        new_board = deepcopy(self)
+        new_board.history = self.history
+        return new_board
 
 
 
@@ -151,7 +154,7 @@ class Board:
     
 
     def best_move(self, depth):
-        moves = self.get_legal_moves()
+        moves = self.order_moves(self.get_legal_moves())
 
         if not moves:
             return None
@@ -191,7 +194,7 @@ class Board:
         if depth == 0:
             return self.evaluate(self)
 
-        moves = self.get_legal_moves()
+        moves = self.order_moves(self.get_legal_moves())
 
         if not moves:
             # Schachmatt und Patt werden später separat behandelt.
@@ -210,6 +213,13 @@ class Board:
                 beta = min(beta, best_score)
 
                 if beta <= alpha:
+                    key = (
+                        move.from_row,
+                        move.from_column,
+                        move.to_row,
+                        move.to_column
+                    )
+                    self.history[key] = self.history.get(key, 0) + depth * depth
                     break
 
         else:
@@ -225,9 +235,33 @@ class Board:
                 alpha = max(alpha, best_score)
 
                 if beta <= alpha:
+                    key = (
+                        move.from_row,
+                        move.from_column,
+                        move.to_row,
+                        move.to_column
+                    )
+                    self.history[key] = self.history.get(key, 0) + depth * depth
                     break
 
         return best_score
+
+
+    def order_moves(self, moves):
+        return sorted(
+            moves,
+            key=lambda move: self.history.get(
+                (
+                    move.from_row,
+                    move.from_column,
+                    move.to_row,
+                    move.to_column
+                ),
+                0
+            ),
+            reverse=True
+        )
+
 
 
         
