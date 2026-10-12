@@ -1,6 +1,8 @@
 from move import Move
 from piece import Piece
 
+from copy import deepcopy
+
 class Board:
 
     def __init__(self):
@@ -95,3 +97,17 @@ class Board:
                 if piece !=  "":
                     rating += piece_values[piece.piece]
         return rating
+
+    def copy(self):
+        return deepcopy(self)
+
+    def best_move(self):
+        moves = self.get_legal_moves()
+        ratings = {}
+        for move in moves:
+            copy: Board = self.copy()
+            copy.move(move)
+            rating = copy.get_material_score()
+            ratings[move] = rating
+        ratings = dict(sorted(ratings.items(), key=lambda x: x[1])) if self.current_turn else dict(sorted(ratings.items(), key=lambda x: x[1], reverse=True))
+        return next(iter(ratings))
