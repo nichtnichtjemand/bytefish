@@ -29,35 +29,29 @@ class Board:
 
     def move(self, move: Move):
 
-        
-        if (
-            move.from_row < 0 or move.from_row > 7 or
-            move.from_column < 0 or move.from_column > 7 or
-            move.to_row < 0 or move.to_row > 7 or
-            move.to_column < 0 or move.to_column > 7
-        ):
-            return ValueError("Koordinaten außerhalb des Bretts")
-
         from_column = move.from_column
         from_row = move.from_row
         to_column = move.to_column
         to_row = move.to_row
 
-        if (move.from_row < 0) or (move.to_row < 0) or (move.from_column < 0) or (move.to_column < 0) or (move.from_row > 7) or (move.to_row > 7) or (move.from_column > 7) or (move.to_column > 7):
+        if (from_row < 0) or (to_row < 0) or (from_column < 0) or (to_column < 0) or (from_row > 7) or (to_row > 7) or (from_column > 7) or (to_column > 7):
             return False
 
         from_piece = self.board[from_row][from_column]
         to_piece = self.board[to_row][to_column]
         if from_piece == "":
-            return ValueError(f"The field is empty")
+            return False
         if to_piece != "":
             if from_piece.color == to_piece.color:
-                return ValueError("Colors of start and end pieces can't be the same")
+                return False
         if from_piece.color != self.current_turn:
-            return ValueError("It's not this color's turn")
+            return False
         if from_column == to_column and from_row == to_row:
-            return ValueError("The start and end piece coordinates are the same")
-        
+            return False
         self.board[to_row][to_column] = from_piece
         self.board[from_row][from_column] = ""
-        self.current_turn = False if self.current_turn else True
+        self.current_turn = not self.current_turn
+
+        return True
+
+        
