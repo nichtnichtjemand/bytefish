@@ -150,7 +150,7 @@ class Board:
         return board.get_material_score() + board.get_position_score()
     
 
-    def best_move(self):
+    def best_move(self, depth):
         moves = self.get_legal_moves()
 
         if not moves:
@@ -169,7 +169,7 @@ class Board:
             child = self.copy()
             child.move(move)
 
-            score = child.minimax(3, alpha, beta)
+            score = child.minimax(depth, alpha, beta)
 
             if self.current_turn:
                 if score < best_score:
@@ -238,7 +238,7 @@ import time
 board = Board()
 
 start = time.perf_counter()
-move = board.best_move()
+move = board.best_move(5)
 elapsed = time.perf_counter() - start
 
 print(f"Zug: {move.from_field}{move.to_field}")
