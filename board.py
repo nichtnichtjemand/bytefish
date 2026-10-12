@@ -58,4 +58,40 @@ class Board:
 
         return True
 
+    def get_legal_moves(self):
+        legal_moves = []
+
+        for from_row in range(8):
+            for from_column in range(8):
+                piece = self.board[from_row][from_column]
+
+                if piece == "" or piece.color != self.current_turn:
+                    continue
+
+                from_field = chr(ord("a") + from_column) + str(8 - from_row)
+
+                for to_row in range(8):
+                    for to_column in range(8):
+                        to_field = chr(ord("a") + to_column) + str(8 - to_row)
+
+                        move = Move(from_field, to_field)
+
+                        if piece.is_legal_move(self, move):
+                            legal_moves.append(move)
+
+        return legal_moves
+
+    def get_material_score(self):
+        rating = 0
+
+        piece_values = {
+            "p": 1, "n": 3, "b": 3, "r": 5, "q": 9, "k": 0, "P": -1, "N": -3, "B": -3, "R": -5, "Q": -9, "K": 0
+        }
+
         
+        for row in range(8):
+            for column in range(8):
+                piece = self.board[row][column]
+                if piece !=  "":
+                    rating += piece_values[piece.piece]
+        return rating
