@@ -1,5 +1,6 @@
 from move import Move
 from piece import Piece
+import piece_square_tables as tables
 
 from copy import deepcopy
 
@@ -101,16 +102,7 @@ class Board:
     def copy(self):
         return deepcopy(self)
 
-    def best_move(self):
-        moves = self.get_legal_moves()
-        ratings = {}
-        for move in moves:
-            copy: Board = self.copy()
-            copy.move(move)
-            rating = copy.get_material_score()
-            ratings[move] = rating
-        ratings = dict(sorted(ratings.items(), key=lambda x: x[1])) if self.current_turn else dict(sorted(ratings.items(), key=lambda x: x[1], reverse=True))
-        return next(iter(ratings))
+
 
     def reset(self):
         setup = [
@@ -133,3 +125,121 @@ class Board:
                 else:
                     new_row.append("")
             self.board.append(new_row)
+
+
+    def get_position_score(self):
+        score = 0
+
+        for row in range(8):
+            for column in range(8):
+                piece = self.board[row][column]
+                if piece != "":
+
+                    table_row = row if piece.color else 7 - row
+                    bonus = tables.PIECE_SQUARE_TABLES[piece.type][table_row][column]
+
+                    if piece.color:
+                        score -= bonus
+                    else:
+                        score += bonus
+
+        return score
+
+
+    def evaluate(self, board):
+        return board.get_material_score() + board.get_position_score()
+    
+
+    def best_move(self):
+        moves = self.get_legal_moves()
+
+        if not moves:
+            return None
+
+        best_move = None
+        alpha = float("-inf")
+        beta = float("inf")
+
+        if self.current_turn:
+            best_score = float("inf")  # Weiß minimiert
+        else:
+            best_score = float("-inf")  # Schwarz maximiert
+
+        for move in moves:
+            child = self.copy()
+            child.move(move)
+
+            score = child.minimax(3, alpha, beta)
+
+            if self.current_turn:
+                if score < best_score:
+                    best_score = score
+                    best_move = move
+
+                beta = min(beta, best_score)
+            else:
+                if score > best_score:
+                    best_score = score
+                    best_move = move
+
+                alpha = max(alpha, best_score)
+
+        return best_move
+
+
+    def minimax(self, depth, alpha=float("-inf"), beta=float("inf")):
+        if depth == 0:
+            return self.evaluate(self)
+
+        moves = self.get_legal_moves()
+
+        if not moves:
+            # Schachmatt und Patt werden später separat behandelt.
+            return self.evaluate(self)
+
+        if self.current_turn:
+            # Weiß minimiert den Score.
+            best_score = float("inf")
+
+            for move in moves:
+                child = self.copy()
+                child.move(move)
+
+                score = child.minimax(depth - 1, alpha, beta)
+                best_score = min(best_score, score)
+                beta = min(beta, best_score)
+
+                if beta <= alpha:
+                    break
+
+        else:
+            # Schwarz maximiert den Score.
+            best_score = float("-inf")
+
+            for move in moves:
+                child = self.copy()
+                child.move(move)
+
+                score = child.minimax(depth - 1, alpha, beta)
+                best_score = max(best_score, score)
+                alpha = max(alpha, best_score)
+
+                if beta <= alpha:
+                    break
+
+        return best_score
+
+
+        
+        
+
+import time
+
+board = Board()
+
+start = time.perf_counter()
+move = board.best_move()
+elapsed = time.perf_counter() - start
+
+print(f"Zug: {move.from_field}{move.to_field}")
+print(f"Zeit: {elapsed:.3f} Sekunden")
