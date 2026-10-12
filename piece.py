@@ -10,14 +10,6 @@ class Piece:
 
     def is_legal_move(self, board, move: Move):
 
-        if not (
-            0 <= move.from_row < 8
-            and 0 <= move.from_column < 8
-            and 0 <= move.to_row < 8
-            and 0 <= move.to_column < 8
-        ):
-            return False
-
         if (move.from_row < 0) or (move.to_row < 0) or (move.from_column < 0) or (move.to_column < 0) or (move.from_row > 7) or (move.to_row > 7) or (move.from_column > 7) or (move.to_column > 7):
             return False
 
