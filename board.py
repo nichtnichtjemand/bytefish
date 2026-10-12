@@ -48,6 +48,10 @@ class Board:
             return False
         if from_column == to_column and from_row == to_row:
             return False
+
+        if not from_piece.is_legal_move(self, move):
+            return False
+        
         self.board[to_row][to_column] = from_piece
         self.board[from_row][from_column] = ""
         self.current_turn = not self.current_turn
