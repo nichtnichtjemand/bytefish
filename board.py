@@ -111,3 +111,25 @@ class Board:
             ratings[move] = rating
         ratings = dict(sorted(ratings.items(), key=lambda x: x[1])) if self.current_turn else dict(sorted(ratings.items(), key=lambda x: x[1], reverse=True))
         return next(iter(ratings))
+
+    def reset(self):
+        setup = [
+                        ["r", "n", "b", "q", "k", "b", "n", "r"],
+                        ["p", "p", "p", "p", "p", "p", "p", "p"],
+                        ["",  "",  "",  "",  "",  "",  "",  "" ],
+                        ["",  "",  "",  "",  "",  "",  "",  "" ],
+                        ["",  "",  "",  "",  "",  "",  "",  "" ],
+                        ["",  "",  "",  "",  "",  "",  "",  "" ],
+                        ["P", "P", "P", "P", "P", "P", "P", "P"],
+                        ["R", "N", "B", "Q", "K", "B", "N", "R"]
+        ]
+        self.current_turn = True # True = White, False = Black
+        self.board = []
+        for row in setup:
+            new_row = []
+            for char in row:
+                if char != "":
+                    new_row.append(Piece(char))
+                else:
+                    new_row.append("")
+            self.board.append(new_row)
