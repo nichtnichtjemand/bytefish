@@ -14,6 +14,7 @@ class Board:
                         ["P", "P", "P", "P", "P", "P", "P", "P"],
                         ["R", "N", "B", "Q", "K", "B", "N", "R"]
         ]
+        self.current_turn = True # True = White, False = Black
         self.board = []
         for row in setup:
             new_row = []
@@ -28,17 +29,35 @@ class Board:
 
     def move(self, move: Move):
 
-        from_column = ord(move.from_field[0].lower()) - ord("a")
-        from_row = 8 - int(move.from_field[1])
+        
+        if (
+            move.from_row < 0 or move.from_row > 7 or
+            move.from_column < 0 or move.from_column > 7 or
+            move.to_row < 0 or move.to_row > 7 or
+            move.to_column < 0 or move.to_column > 7
+        ):
+            return ValueError("Koordinaten außerhalb des Bretts")
 
-        to_column = ord(move.to_field[0].lower()) - ord("a")
-        to_row = 8 - int(move.to_field[1])
+        from_column = move.from_column
+        from_row = move.from_row
+        to_column = move.to_column
+        to_row = move.to_row
 
-        piece = self.board[from_row][from_column]
+        if (move.from_row < 0) or (move.to_row < 0) or (move.from_column < 0) or (move.to_column < 0) or (move.from_row > 7) or (move.to_row > 7) or (move.from_column > 7) or (move.to_column > 7):
+            return False
 
-        self.board[to_row][to_column] = piece
+        from_piece = self.board[from_row][from_column]
+        to_piece = self.board[to_row][to_column]
+        if from_piece == "":
+            return ValueError(f"The field is empty")
+        if to_piece != "":
+            if from_piece.color == to_piece.color:
+                return ValueError("Colors of start and end pieces can't be the same")
+        if from_piece.color != self.current_turn:
+            return ValueError("It's not this color's turn")
+        if from_column == to_column and from_row == to_row:
+            return ValueError("The start and end piece coordinates are the same")
+        
+        self.board[to_row][to_column] = from_piece
         self.board[from_row][from_column] = ""
-        
-        
-    
-
+        self.current_turn = False if self.current_turn else True
