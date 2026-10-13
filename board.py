@@ -87,11 +87,11 @@ class Board:
 
     def get_material_score(self):
         rating = 0
-
+        
         piece_values = {
-            "p": 1, "n": 3, "b": 3, "r": 5, "q": 9, "k": 0, "P": -1, "N": -3, "B": -3, "R": -5, "Q": -9, "K": 0
+            "p": 100, "n": 300, "b": 300, "r": 500, "q": 900, "k": 0, 
+            "P": -100, "N": -300, "B": -300, "R": -500, "Q": -900, "K": 0
         }
-
         
         for row in range(8):
             for column in range(8):
@@ -137,16 +137,14 @@ class Board:
             for column in range(8):
                 piece = self.board[row][column]
                 if piece != "":
-
                     table_row = row if piece.color else 7 - row
                     bonus = tables.PIECE_SQUARE_TABLES[piece.type][table_row][column]
 
                     if piece.color:
                         score -= bonus
                     else:
-                        score += bonus
+                        score += bonus 
 
-        return score
 
 
     def evaluate(self, board):
@@ -261,19 +259,3 @@ class Board:
             ),
             reverse=True
         )
-
-
-
-        
-        
-
-import time
-
-board = Board()
-
-start = time.perf_counter()
-move = board.best_move(5)
-elapsed = time.perf_counter() - start
-
-print(f"Zug: {move.from_field}{move.to_field}")
-print(f"Zeit: {elapsed:.3f} Sekunden")

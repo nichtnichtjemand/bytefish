@@ -52,7 +52,7 @@ def handle_go(board: Board) -> None:
         print("bestmove 0000")
         return
 
-    best_move = board.best_move()
+    best_move = board.best_move(4)
 
     if best_move is None:
         print("bestmove 0000")
