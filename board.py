@@ -87,7 +87,7 @@ class Board:
 
     def get_material_score(self):
         rating = 0
-        
+
         piece_values = {
             "p": 100, "n": 300, "b": 300, "r": 500, "q": 900, "k": 0, 
             "P": -100, "N": -300, "B": -300, "R": -500, "Q": -900, "K": 0
@@ -144,6 +144,8 @@ class Board:
                         score -= bonus
                     else:
                         score += bonus 
+
+        return score
 
 
 
@@ -246,16 +248,18 @@ class Board:
 
 
     def order_moves(self, moves):
-        return sorted(
-            moves,
-            key=lambda move: self.history.get(
-                (
-                    move.from_row,
-                    move.from_column,
-                    move.to_row,
-                    move.to_column
-                ),
-                0
-            ),
-            reverse=True
-        )
+        def move_value(move):
+
+            from_piece = self.board[move.from_row][move.from_column]
+            to_piece = self.board[move.to_row][move.to_column]
+            
+            score = 0
+            if to_piece != "":
+                piece_values = {"p": 1, "n": 3, "b": 3, "r": 5, "q": 9, "k": 0}
+                score += 1000 + (piece_values[to_piece.piece.lower()] * 10 - piece_values[from_piece.piece.lower()])
+            
+            key = (move.from_row, move.from_column, move.to_row, move.to_column)
+            score += self.history.get(key, 0)
+            return score
+
+        return sorted(moves, key=move_value, reverse=True)
