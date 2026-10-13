@@ -1,7 +1,4 @@
 
-# Piece-Square Tables für Bytefish
-# Perspektive: Weiß spielt von Zeile 7 Richtung Zeile 0.
-# Werte in Centipawns (100 = ungefähr ein Bauer).
 
 PAWN_TABLE = [
     [  0,   0,   0,   0,   0,   0,   0,   0],
