@@ -21,6 +21,9 @@ def parse_uci_move(uci_move: str) -> Move:
 def handle_position(board: Board, command: str) -> None:
     parts = command.split()
 
+    depth = 4
+
+
     if len(parts) < 2:
         print("info string Invalid position command")
         return
@@ -45,14 +48,27 @@ def handle_position(board: Board, command: str) -> None:
             return
 
 
-def handle_go(board: Board) -> None:
+
+def handle_go(board: Board, command: str) -> None:
+    parts = command.split()
+    depth = 4
+
+    if "depth" in parts:
+        try:
+            depth = int(parts[parts.index("depth") + 1])
+            if depth < 1:
+                raise ValueError
+        except (ValueError, IndexError):
+            print("info string Invalid depth")
+            return
+
     moves = board.get_legal_moves()
 
     if not moves:
         print("bestmove 0000")
         return
 
-    best_move = board.best_move(4)
+    best_move = board.best_move(depth)
 
     if best_move is None:
         print("bestmove 0000")
@@ -88,7 +104,7 @@ def main() -> None:
             handle_position(board, command)
 
         elif command == "go" or command.startswith("go "):
-            handle_go(board)
+            handle_go(board, command)
 
         elif command == "stop":
             pass
