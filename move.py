@@ -15,3 +15,10 @@ class Move:
             self.from_row = -1
             self.to_column = -1
             self.to_row = -1
+
+    def __str__(self) -> str:
+        return f"From: {self.from_field} To: {self.to_field}"
+
+    def __repr__(self):
+        return str(self)
+    

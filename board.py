@@ -62,6 +62,7 @@ class Board:
 
         return True
 
+
     def get_legal_moves(self):
         legal_moves = []
 
@@ -72,18 +73,32 @@ class Board:
                 if piece == "" or piece.color != self.current_turn:
                     continue
 
-                from_field = chr(ord("a") + from_column) + str(8 - from_row)
-
                 for to_row in range(8):
                     for to_column in range(8):
-                        to_field = chr(ord("a") + to_column) + str(8 - to_row)
+                        from_field = (
+                            chr(ord("a") + from_column)
+                            + str(8 - from_row)
+                        )
+                        to_field = (
+                            chr(ord("a") + to_column)
+                            + str(8 - to_row)
+                        )
 
                         move = Move(from_field, to_field)
 
-                        if piece.is_legal_move(self, move):
+                        if not piece.is_legal_move(self, move):
+                            continue
+
+                        # Zug auf einer Kopie ausprobieren
+                        child = self.copy()
+                        child.move(move)
+
+                        # Eigener König darf nicht im Schach stehen
+                        if not child.is_in_check(self.current_turn):
                             legal_moves.append(move)
 
         return legal_moves
+
 
     def get_material_score(self):
         rating = 0
@@ -101,8 +116,11 @@ class Board:
         return rating
 
     def copy(self):
-        new_board = deepcopy(self)
-        new_board.history = self.history
+        # Viel schneller als deepcopy, da nur die Listen kopiert werden
+        new_board = Board()
+        new_board.current_turn = self.current_turn
+        # Erstellt flache Kopien der Zeilen (die Piece-Objekte bleiben gleich)
+        new_board.board = [row[:] for row in self.board]
         return new_board
 
 
@@ -164,9 +182,9 @@ class Board:
         beta = float("inf")
 
         if self.current_turn:
-            best_score = float("inf")  # Weiß minimiert
+            best_score = float("inf")
         else:
-            best_score = float("-inf")  # Schwarz maximiert
+            best_score = float("-inf") 
 
         for move in moves:
             child = self.copy()
@@ -197,11 +215,15 @@ class Board:
         moves = self.order_moves(self.get_legal_moves())
 
         if not moves:
-            # Schachmatt und Patt werden später separat behandelt.
-            return self.evaluate(self)
+            if self.is_in_check(self.current_turn):
+                if self.current_turn:
+                    return 100000 + depth
+                else:
+                    return -100000 - depth
+
+            return 0
 
         if self.current_turn:
-            # Weiß minimiert den Score.
             best_score = float("inf")
 
             for move in moves:
@@ -223,7 +245,6 @@ class Board:
                     break
 
         else:
-            # Schwarz maximiert den Score.
             best_score = float("-inf")
 
             for move in moves:
@@ -263,3 +284,109 @@ class Board:
             return score
 
         return sorted(moves, key=move_value, reverse=True)
+
+
+
+    def is_in_check(self, color):
+
+        for row in range(8):
+            for column in range(8):
+                piece = self.board[row][column]
+
+                if (
+                    piece != ""
+                    and piece.type == "k"
+                    and piece.color == color
+                ):
+                    enemy_color = not color
+
+                    return self.is_square_attacked(
+                        row,
+                        column,
+                        enemy_color
+                    )
+
+        raise ValueError("König nicht gefunden")
+
+
+    def is_square_attacked(self, row, column, by_color):
+        for from_row in range(8):
+            for from_column in range(8):
+                piece = self.board[from_row][from_column]
+
+                if piece == "" or piece.color != by_color:
+                    continue
+
+                # Bauern greifen diagonal an
+                if piece.type == "p":
+                    direction = 1 if piece.color is False else -1
+
+                    if (
+                        row == from_row + direction
+                        and abs(column - from_column) == 1
+                    ):
+                        return True
+
+                    continue
+
+                move = Move(
+                    chr(ord("a") + from_column) + str(8 - from_row),
+                    chr(ord("a") + column) + str(8 - row)
+                )
+
+                if piece.is_legal_move(self, move):
+                    return True
+
+        return False
+
+    def is_checkmate(self, color):
+        if not self.is_in_check(color):
+            return False
+
+        old_turn = self.current_turn
+        self.current_turn = color
+
+        try:
+            return len(self.get_legal_moves()) == 0
+        finally:
+            self.current_turn = old_turn
+
+
+
+board = Board()
+board.board = [["" for _ in range(8)] for _ in range(8)]
+
+# Weißer König auf f6
+board.board[2][5] = Piece("K")
+
+# Weiße Dame auf g6
+board.board[2][6] = Piece("Q")
+
+# Schwarzer König auf h8
+board.board[0][7] = Piece("k")
+
+board.current_turn = True  # Weiß ist am Zug
+
+print("Weiß im Schach:", board.is_in_check(True))
+print("Schwarz im Schach:", board.is_in_check(False))
+
+# Alle Matt-in-eins-Züge suchen
+mate_moves = []
+
+for move in board.get_legal_moves():
+    child = board.copy()
+
+    if child.move(move) and child.is_checkmate(False):
+        mate_moves.append(move)
+
+print("Matt-in-eins-Züge:", mate_moves)
+
+# Besten Zug der Engine prüfen
+best = board.best_move(3)
+print("Bester Zug:", best)
+
+if best is not None:
+    child = board.copy()
+    child.move(best)
+
+    print("Setzt der beste Zug matt:", child.is_checkmate(False))
