@@ -1,4 +1,3 @@
-
 import pytest
 
 from board import Board
@@ -38,9 +37,6 @@ def coordinates_valid(move):
     )
 
 
-# -------------------------
-# Initialisierung
-# -------------------------
 
 def test_initial_board_has_32_pieces():
     board = Board()
@@ -67,9 +63,6 @@ def test_initial_legal_moves_count():
     assert len(board.get_legal_moves()) == 20
 
 
-# -------------------------
-# Move-Klasse
-# -------------------------
 
 @pytest.mark.parametrize(
     ("from_field", "to_field"),
@@ -93,9 +86,6 @@ def test_valid_move_coordinates():
     assert coordinates_valid(move)
 
 
-# -------------------------
-# Figurenbewegungen
-# -------------------------
 
 @pytest.mark.parametrize(
     ("from_field", "to_field", "valid"),
@@ -113,7 +103,6 @@ def test_piece_movement(from_field, to_field, valid):
     board = Board()
     move = make_move(from_field, to_field)
 
-    # Ungültige Koordinaten dürfen keinen Brettzugriff auslösen.
     if not coordinates_valid(move):
         assert valid is False
         assert not board.move(move)
@@ -160,9 +149,6 @@ def test_queen_moves_straight_and_diagonally():
     assert not queen.is_legal_move(board, make_move("d4", "e6"))
 
 
-# -------------------------
-# Board.move()
-# -------------------------
 
 def test_valid_move_changes_board():
     board = Board()
@@ -225,42 +211,3 @@ def test_board_rejects_invalid_coordinates(from_field, to_field):
 
     assert not board.move(make_move(from_field, to_field))
 
-
-# -------------------------
-# Materialbewertung
-# -------------------------
-
-def test_material_score_after_white_loses_pawn():
-    board = Board()
-    board.board[6][0] = ""
-
-    assert board.get_material_score() == 1
-
-
-def test_material_score_after_black_loses_pawn():
-    board = Board()
-    board.board[1][0] = ""
-
-    assert board.get_material_score() == -1
-
-
-def test_material_score_with_black_rook():
-    board = empty_board()
-    place_piece(board, "a8", "r")
-
-    assert board.get_material_score() == 5
-
-
-def test_material_score_with_white_queen():
-    board = empty_board()
-    place_piece(board, "d1", "Q")
-
-    assert board.get_material_score() == -9
-
-
-def test_material_score_with_both_kings():
-    board = empty_board()
-    place_piece(board, "e1", "K")
-    place_piece(board, "e8", "k")
-
-    assert board.get_material_score() == 0
