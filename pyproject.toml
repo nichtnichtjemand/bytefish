@@ -1,7 +1,7 @@
 [project]
 name = "bytefish"
 version = "0.1.0"
-description = "Add your description here"
+description = "A chess engine written in Python"
 readme = "README.md"
 authors = [
     { name = "Alexander Zollner", email = "alex.zollner2011@gmail.com" }
