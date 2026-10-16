@@ -174,49 +174,77 @@ class Board:
                 if piece == "" or piece.color != self.current_turn:
                     continue
 
-                for to_row in range(8):
-                    for to_column in range(8):
-                        from_field = (
-                            chr(ord("a") + from_column)
-                            + str(8 - from_row)
+                from_field = (
+                    chr(ord("a") + from_column)
+                    + str(8 - from_row)
+                )
+
+                for candidate in piece.get_candidate_moves(
+                    self, from_row, from_column
+                ):
+                    to_row = candidate.to_row
+                    to_column = candidate.to_column
+
+                    to_field = (
+                        chr(ord("a") + to_column)
+                        + str(8 - to_row)
+                    )
+
+                    promotions = (
+                        ("q", "r", "b", "n")
+                        if piece.type == "p" and to_row in (0, 7)
+                        else (None,)
+                    )
+
+                    for promotion in promotions:
+                        move = Move(from_field, to_field, promotion)
+
+                        is_castling = (
+                            piece.type == "k"
+                            and from_column == 4
+                            and to_column in (2, 6)
+                            and from_row == to_row
                         )
+
+                        if is_castling and not self._can_castle(move):
+                            continue
+
+                        if not is_castling and not piece.is_legal_move(
+                            self, move
+                        ):
+                            continue
+
+                        child = self.copy()
+
+                        if not child.move(move):
+                            continue
+
+                        if not child.is_in_check(self.current_turn):
+                            legal_moves.append(move)
+
+                # Rochade separat prüfen, da der König
+                # normalerweise nur ein Feld weit zieht.
+                if piece.type == "k" and from_column == 4:
+                    for to_column in (2, 6):
                         to_field = (
                             chr(ord("a") + to_column)
-                            + str(8 - to_row)
+                            + str(8 - from_row)
                         )
 
-                        promotions = (
-                            ("q", "r", "b", "n")
-                            if piece.type == "p" and to_row in (0, 7)
-                            else (None,)
-                        )
+                        move = Move(from_field, to_field)
 
-                        for promotion in promotions:
-                            move = Move(from_field, to_field, promotion)
+                        if not self._can_castle(move):
+                            continue
 
-                            is_castling = (
-                                piece.type == "k"
-                                and from_column == 4
-                                and to_column in (2, 6)
-                                and from_row == to_row
-                            )
+                        child = self.copy()
 
-                            if is_castling:
-                                if not self._can_castle(move):
-                                    continue
-                            elif not piece.is_legal_move(self, move):
-                                continue
+                        if not child.move(move):
+                            continue
 
-                            # Zug auf einer Kopie ausprobieren
-                            child = self.copy()
-                            child.move(move)
-
-                            # Eigener König darf nicht im Schach stehen
-                            if not child.is_in_check(self.current_turn):
-                                legal_moves.append(move)
+                        if not child.is_in_check(self.current_turn):
+                            legal_moves.append(move)
 
         return legal_moves
-
 
     def get_material_score(self):
         rating = 0

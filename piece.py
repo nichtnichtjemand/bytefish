@@ -158,3 +158,99 @@ class Piece:
             column += col_step
 
         return True
+
+    def get_candidate_moves(self, board, row, column):
+        moves = []
+
+        if self.type == "n":
+            offsets = [
+                (-2, -1), (-2, 1),
+                (-1, -2), (-1, 2),
+                (1, -2), (1, 2),
+                (2, -1), (2, 1)
+            ]
+
+            for dr, dc in offsets:
+                r, c = row + dr, column + dc
+
+                if self._in_bounds(r, c):
+                    moves.append(self._create_move(row, column, r, c))
+
+        elif self.type == "k":
+            for dr in (-1, 0, 1):
+                for dc in (-1, 0, 1):
+                    if dr == 0 and dc == 0:
+                        continue
+
+                    r, c = row + dr, column + dc
+
+                    if self._in_bounds(r, c):
+                        moves.append(self._create_move(row, column, r, c))
+
+        elif self.type == "p":
+            direction = -1 if self.color else 1
+            start_row = 6 if self.color else 1
+
+            # Ein Feld vorwärts
+            r = row + direction
+
+            if self._in_bounds(r, column):
+                moves.append(self._create_move(row, column, r, column))
+
+                # Zwei Felder vom Startfeld
+                if row == start_row:
+                    r2 = row + 2 * direction
+
+                    if self._in_bounds(r2, column):
+                        moves.append(
+                            self._create_move(row, column, r2, column)
+                        )
+
+            # Diagonale Schläge
+            for dc in (-1, 1):
+                r, c = row + direction, column + dc
+
+                if self._in_bounds(r, c):
+                    moves.append(self._create_move(row, column, r, c))
+
+        elif self.type in ("r", "b", "q"):
+            directions = []
+
+            # Turm: gerade Richtungen
+            if self.type in ("r", "q"):
+                directions.extend([
+                    (-1, 0), (1, 0),
+                    (0, -1), (0, 1)
+                ])
+
+            # Läufer: diagonale Richtungen
+            if self.type in ("b", "q"):
+                directions.extend([
+                    (-1, -1), (-1, 1),
+                    (1, -1), (1, 1)
+                ])
+
+            for dr, dc in directions:
+                r, c = row + dr, column + dc
+
+                while self._in_bounds(r, c):
+                    moves.append(self._create_move(row, column, r, c))
+
+                    # Hinter einer Figur geht es nicht weiter
+                    if board.board[r][c] != "":
+                        break
+
+                    r += dr
+                    c += dc
+
+        return moves
+
+
+    def _in_bounds(self, row, column):
+        return 0 <= row < 8 and 0 <= column < 8
+
+    def _create_move(self, from_row, from_column, to_row, to_column):
+        from_field = chr(ord("a") + from_column) + str(8 - from_row)
+        to_field = chr(ord("a") + to_column) + str(8 - to_row)
+
+        return Move(from_field, to_field)
