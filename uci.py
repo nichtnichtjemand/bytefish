@@ -1,49 +1,81 @@
+
 from board import Board
 from move import Move
 
+
 def uci_move_to_string(move: Move) -> str:
-    return f"{move.from_field.lower()}{move.to_field.lower()}"
+    promotion = move.promotion.lower() if move.promotion else ""
+    return f"{move.from_field.lower()}{move.to_field.lower()}{promotion}"
 
 
-def parse_uci_move(uci_move: str) -> Move:
-    if len(uci_move) != 4:
+def parse_uci_move(uci_move: str, board: Board | None = None) -> Move:
+    notation = uci_move.upper()
+
+    if notation in ("O-O", "0-0"):
+        rank = "1" if board is None or board.current_turn else "8"
+        return Move(f"e{rank}", f"g{rank}")
+
+    if notation in ("O-O-O", "0-0-0"):
+        rank = "1" if board is None or board.current_turn else "8"
+        return Move(f"e{rank}", f"c{rank}")
+
+    if len(uci_move) not in (4, 5):
         raise ValueError(f"Unsupported UCI-Move: {uci_move}")
 
     from_field = uci_move[:2]
     to_field = uci_move[2:4]
+    promotion = uci_move[4].lower() if len(uci_move) == 5 else None
 
-    return Move(from_field, to_field)
+    return Move(from_field, to_field, promotion)
 
 
 def handle_position(board: Board, command: str) -> None:
     parts = command.split()
 
-    depth = 4
-
-
     if len(parts) < 2:
         print("info string Invalid position command")
         return
 
-    if parts[1] != "startpos":
-        print("info string Only startpos for now")
-        return
+    if parts[1] == "startpos":
+        board.reset()
+        moves_index = 2
 
-    board.reset()
+    elif parts[1] == "fen":
+        if "moves" in parts:
+            moves_index = parts.index("moves")
+        else:
+            moves_index = len(parts)
+
+        fen_parts = parts[2:moves_index]
+
+        if len(fen_parts) != 6:
+            print("info string Invalid FEN")
+            return
+
+        try:
+            board.load_fen(" ".join(fen_parts))
+        except ValueError as error:
+            print(f"info string Invalid FEN: {error}")
+            return
+
+    else:
+        print("info string Unsupported position command")
+        return
 
     if "moves" not in parts:
         return
 
-    moves_index = parts.index("moves")
-
     for uci_move in parts[moves_index + 1:]:
         try:
-            move = parse_uci_move(uci_move)
-            board.move(move)
+            move = parse_uci_move(uci_move, board)
+
+            if not board.move(move):
+                print(f"info string Illegal Move {uci_move}")
+                return
+
         except (ValueError, IndexError) as error:
             print(f"info string Illegal Move {uci_move}: {error}")
             return
-
 
 
 def handle_go(board: Board, command: str) -> None:
@@ -52,10 +84,17 @@ def handle_go(board: Board, command: str) -> None:
 
     if "depth" in parts:
         try:
-            depth = int(parts[parts.index("depth") + 1])
+            depth_index = parts.index("depth")
+
+            if depth_index + 1 >= len(parts):
+                raise ValueError
+
+            depth = int(parts[depth_index + 1])
+
             if depth < 1:
                 raise ValueError
-        except (ValueError, IndexError):
+
+        except ValueError:
             print("info string Invalid depth")
             return
 
@@ -87,8 +126,8 @@ def main() -> None:
             continue
 
         if command == "uci":
-            print(f"id name Bytefish")
-            print(f"id author nichtnichtjemand")
+            print("id name Bytefish")
+            print("id author nichtnichtjemand")
             print("uciok")
 
         elif command == "isready":

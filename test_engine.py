@@ -3,6 +3,7 @@ import pytest
 from board import Board
 from move import Move
 from piece import Piece
+from uci import parse_uci_move, uci_move_to_string
 
 
 def make_move(from_field, to_field):
@@ -211,3 +212,75 @@ def test_board_rejects_invalid_coordinates(from_field, to_field):
 
     assert not board.move(make_move(from_field, to_field))
 
+
+def test_pawn_promotion_generates_all_promotion_choices():
+    board = Board()
+    board.load_fen("4k3/P7/8/8/8/8/8/4K3 w - - 0 1")
+
+    promotions = [
+        move
+        for move in board.get_legal_moves()
+        if move.from_field == "a7" and move.to_field == "a8"
+    ]
+
+    assert [move.promotion for move in promotions] == ["q", "r", "b", "n"]
+
+
+def test_uci_promotion_move_round_trip():
+    move = parse_uci_move("a7a8q")
+
+    assert move.promotion == "q"
+    assert uci_move_to_string(move) == "a7a8q"
+
+
+def test_pawn_promotion_applies_selected_piece():
+    board = Board()
+    board.load_fen("4k3/P7/8/8/8/8/8/4K3 w - - 0 1")
+
+    assert board.move(parse_uci_move("a7a8n"))
+    assert board.board[0][0].piece == "N"
+
+
+@pytest.mark.parametrize(
+    ("notation", "king_field", "rook_field"),
+    [
+        ("e1g1", "g1", "f1"),
+        ("O-O", "g1", "f1"),
+        ("e1c1", "c1", "d1"),
+        ("O-O-O", "c1", "d1"),
+    ],
+)
+def test_white_castling_from_uci_notation(notation, king_field, rook_field):
+    board = Board()
+    board.load_fen("r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1")
+
+    assert board.move(parse_uci_move(notation, board))
+    assert board.board[8 - int(king_field[1])][ord(king_field[0]) - ord("a")].piece == "K"
+    assert board.board[8 - int(rook_field[1])][ord(rook_field[0]) - ord("a")].piece == "R"
+    assert board.castling_rights == "kq"
+
+
+@pytest.mark.parametrize(
+    ("notation", "king_field", "rook_field"),
+    [
+        ("O-O", "g8", "f8"),
+        ("O-O-O", "c8", "d8"),
+    ],
+)
+def test_black_castling_from_short_notation(notation, king_field, rook_field):
+    board = Board()
+    board.load_fen("r3k2r/8/8/8/8/8/8/R3K2R b KQkq - 0 1")
+
+    assert board.move(parse_uci_move(notation, board))
+    assert board.board[8 - int(king_field[1])][ord(king_field[0]) - ord("a")].piece == "k"
+    assert board.board[8 - int(rook_field[1])][ord(rook_field[0]) - ord("a")].piece == "r"
+    assert board.castling_rights == "KQ"
+
+
+def test_castling_is_generated_as_legal_move():
+    board = Board()
+    board.load_fen("r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1")
+
+    moves = {(move.from_field, move.to_field) for move in board.get_legal_moves()}
+
+    assert {("e1", "g1"), ("e1", "c1")} <= moves
