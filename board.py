@@ -463,6 +463,34 @@ class Board:
 
         return score
 
+    def get_hanging_piece_score(self):
+        """Penalize non-king pieces that can be taken without protection."""
+        piece_values = {
+            "p": 50,
+            "n": 150,
+            "b": 160,
+            "r": 250,
+            "q": 450,
+        }
+        score = 0
+
+        for row in range(8):
+            for column in range(8):
+                piece = self.board[row][column]
+                if piece == "" or piece.type == "k":
+                    continue
+
+                enemy = not piece.color
+                if not self.is_square_attacked(row, column, enemy):
+                    continue
+                if self.is_square_attacked(row, column, piece.color):
+                    continue
+
+                penalty = piece_values[piece.type]
+                score += penalty if piece.color else -penalty
+
+        return score
+
     def _endgame_move_bonus(self, move):
         """Prioritize promotion races, passed pawns, and active kings."""
         piece = self.board[move.from_row][move.from_column]
@@ -714,6 +742,89 @@ class Board:
                     break
 
         return best_score
+
+    def quiescence(self, alpha, beta, deadline=None, remaining_depth=4):
+        """Resolve forcing captures before accepting a leaf evaluation."""
+        self._check_deadline(deadline)
+        legal_moves = self.get_legal_moves()
+        in_check = self.is_in_check(self.current_turn)
+
+        if not in_check:
+            stand_pat = self.evaluate(self)
+            if self.current_turn:
+                beta = min(beta, stand_pat)
+                if beta <= alpha or remaining_depth == 0:
+                    return stand_pat
+            else:
+                alpha = max(alpha, stand_pat)
+                if beta <= alpha or remaining_depth == 0:
+                    return stand_pat
+        elif remaining_depth == 0:
+            return self.evaluate(self)
+
+        tactical_moves = [
+            move for move in legal_moves
+            if (
+                (
+                    self.board[move.to_row][move.to_column] != ""
+                    and self.board[move.to_row][move.to_column].type != "k"
+                )
+                or move.promotion is not None
+                or self.is_en_passant(move)
+            )
+        ]
+        if in_check:
+            tactical_moves = [
+                move for move in legal_moves
+                if (
+                    self.board[move.to_row][move.to_column] == ""
+                    or self.board[move.to_row][move.to_column].type != "k"
+                )
+            ]
+
+        if not tactical_moves:
+            return self.evaluate(self)
+
+        tactical_moves = self.order_moves(tactical_moves)
+        if self.current_turn:
+            best_score = float("inf")
+            for move in tactical_moves:
+                self._check_deadline(deadline)
+                child = self.copy()
+                child.move(move)
+                best_score = min(
+                    best_score,
+                    child.quiescence(
+                        alpha, beta, deadline, remaining_depth - 1
+                    ),
+                )
+                beta = min(beta, best_score)
+                if beta <= alpha:
+                    break
+            return best_score
+
+        best_score = float("-inf")
+        for move in tactical_moves:
+            self._check_deadline(deadline)
+            child = self.copy()
+            child.move(move)
+            best_score = max(
+                best_score,
+                child.quiescence(
+                    alpha, beta, deadline, remaining_depth - 1
+                ),
+            )
+            alpha = max(alpha, best_score)
+            if beta <= alpha:
+                break
+        return best_score
+
+    def is_losing_for_side_to_move(self):
+        """Return whether the static evaluation is clearly unfavorable."""
+        score = self.evaluate(self)
+        return (self.current_turn and score > 250) or (
+            not self.current_turn and score < -250
+        )
 
 
     def order_moves(self, moves):

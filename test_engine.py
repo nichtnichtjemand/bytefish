@@ -3,7 +3,14 @@ import pytest
 from board import Board
 from move import Move
 from piece import Piece
-from uci import handle_go, handle_position, parse_uci_move, uci_move_to_string
+from uci import (
+    calculate_search_budget,
+    handle_go,
+    handle_position,
+    parse_uci_move,
+    position_time_factor,
+    uci_move_to_string,
+)
 
 
 def make_move(from_field, to_field):
@@ -62,6 +69,63 @@ def test_initial_legal_moves_count():
     board = Board()
 
     assert len(board.get_legal_moves()) == 20
+
+
+def test_bullet_budget_is_small_and_keeps_reserve():
+    assert calculate_search_budget(1000, 0) == 0.1
+    assert calculate_search_budget(2000, 1000) <= 0.12
+
+
+def test_clock_budget_does_not_treat_complexity_as_movetime():
+    budget = calculate_search_budget(60000, complexity=1.0)
+
+    assert budget == 2.0
+
+
+def test_blitz_budget_uses_increment_without_spending_clock():
+    budget = calculate_search_budget(5000, 1000)
+
+    assert 0.5 >= budget > 0.5 - 1e-9
+
+
+def test_position_time_factor_spends_more_on_tactical_positions():
+    quiet_board = Board()
+    tactical_board = Board()
+    tactical_board.load_fen("4k3/8/8/8/3q4/8/4R3/4K3 w - - 0 1")
+
+    quiet_factor, quiet_tactical = position_time_factor(
+        quiet_board, quiet_board.get_legal_moves()
+    )
+    tactical_factor, tactical = position_time_factor(
+        tactical_board, tactical_board.get_legal_moves()
+    )
+
+    assert not quiet_tactical
+    assert tactical
+    assert tactical_factor > quiet_factor
+
+
+def test_quiescence_sees_immediate_capture():
+    board = Board()
+    board.tablebase = None
+    board.load_fen("4k3/8/8/8/8/3q4/4R3/K7 w - - 0 1")
+
+    assert board.quiescence(float("-inf"), float("inf")) > 300
+
+
+def test_losing_position_is_marked_for_defensive_search():
+    board = Board()
+    board.load_fen("4k3/8/8/8/8/3q4/8/4K3 w - - 0 1")
+
+    assert board.is_losing_for_side_to_move()
+
+
+def test_hanging_piece_is_penalized():
+    board = Board()
+    board.tablebase = None
+    board.load_fen("4k3/8/8/8/8/3q4/4R3/4K3 w - - 0 1")
+
+    assert board.get_hanging_piece_score() > 0
 
 
 def test_fen_round_trip():

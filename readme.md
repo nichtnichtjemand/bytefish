@@ -57,7 +57,7 @@ git clone https://github.com/nichtnichtjemand/bytefish.git
 - Minimax and Alpha-Beta-Pruning
 - History Heuristic
 - Syzygy tablebases for positions with up to five pieces (when available in `../syzygy` or `BYTEFISH_SYZYGY_PATH`)
-- Working on Depth 4 normally, takes about 20 seconds per move
+- Working on Depth 4 normally, takes about 4 seconds per move
 
 The UCI option `SyzygyPath` can be used to configure another tablebase directory:
 
@@ -75,12 +75,21 @@ go wtime 30000 btime 30000 winc 500 binc 500 movestogo 20
 go movetime 1000
 ```
 
+Time management is position-aware: tactical positions (check, captures,
+promotions, or very few legal moves) receive more time, while quiet positions
+and simple endgames receive less. Legal-move count, material phase, increment,
+remaining time, and `movestogo` are combined before the deadline is chosen.
+Bullet and fast blitz still receive conservative safety reserves for
+communication and network lag. For example, with one second remaining and no
+increment, a quiet position targets about 85 ms, while a tactical position may
+receive more without risking the clock.
+
 Positions can be sent with a complete FEN, optionally followed by moves:
 
 ```
 position fen r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1 moves e1g1
 ```
 ## To-Do
-- Castling and En Passant
+- Improve evaluation and opening knowledge
 ## Contribute
 ### Feel free to create an Issue on Github when you find a problem, it helps me alot!
