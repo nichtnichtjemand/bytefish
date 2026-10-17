@@ -7,7 +7,9 @@ authors = [
     { name = "Alexander Zollner", email = "alex.zollner2011@gmail.com" }
 ]
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "chess>=1.11.2",
+]
 
 [project.scripts]
 bytefish = "bytefish:main"

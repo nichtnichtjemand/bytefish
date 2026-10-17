@@ -64,6 +64,41 @@ def test_initial_legal_moves_count():
     assert len(board.get_legal_moves()) == 20
 
 
+def test_fen_round_trip():
+    board = Board()
+    fen = "r3k2r/8/8/8/8/8/8/R3K2R b KQkq - 4 12"
+
+    board.load_fen(fen)
+
+    assert board.to_fen() == fen
+
+
+def test_syzygy_probe_for_five_or_fewer_pieces():
+    board = Board()
+    if board.tablebase is None:
+        pytest.skip("Syzygy tablebases are not available")
+
+    board.load_fen("7k/8/8/8/8/8/6Q1/7K w - - 0 1")
+
+    assert board.tablebase.probe_wdl(board) == 2
+
+
+def test_tablebase_move_selection_ignores_search_depth():
+    board = Board()
+    if board.tablebase is None:
+        pytest.skip("Syzygy tablebases are not available")
+
+    board.load_fen("7k/8/8/8/8/8/6Q1/7K w - - 0 1")
+
+    shallow = board.best_move(1)
+    deep = board.best_move(4)
+
+    assert (shallow.from_field, shallow.to_field) == (
+        deep.from_field,
+        deep.to_field,
+    )
+
+
 
 @pytest.mark.parametrize(
     ("from_field", "to_field"),

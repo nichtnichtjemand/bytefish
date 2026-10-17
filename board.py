@@ -1,11 +1,12 @@
 from move import Move
 from piece import Piece
 import piece_square_tables as tables
+from syzygy import SyzygyTablebase
 
 
 class Board:
 
-    def __init__(self):
+    def __init__(self, tablebase: SyzygyTablebase | None = None):
         setup = [
                         ["r", "n", "b", "q", "k", "b", "n", "r"],
                         ["p", "p", "p", "p", "p", "p", "p", "p"],
@@ -31,6 +32,11 @@ class Board:
         self.en_passant_square = "-"
         self.halfmove_clock = 0
         self.fullmove_number = 1
+        self.tablebase = tablebase
+        if self.tablebase is None:
+            default_path = SyzygyTablebase.default_path()
+            if default_path is not None:
+                self.tablebase = SyzygyTablebase(default_path)
 
 
 
@@ -273,6 +279,7 @@ class Board:
         new_board.fullmove_number = self.fullmove_number
 
         new_board.history = self.history.copy()
+        new_board.tablebase = self.tablebase
 
         return new_board
 
@@ -338,6 +345,13 @@ class Board:
 
 
     def evaluate(self, board):
+        if board.tablebase is not None:
+            wdl = board.tablebase.probe_wdl(board)
+            if wdl is not None:
+                # Existing scores are positive for Black and negative for White.
+                perspective = -1 if board.current_turn else 1
+                return perspective * wdl * 100000
+
         return board.get_material_score() + board.get_position_score()
     
 
@@ -346,6 +360,10 @@ class Board:
 
         if not moves:
             return None
+
+        tablebase_move = self._best_tablebase_move(moves)
+        if tablebase_move is not None:
+            return tablebase_move
 
         mate_move = self.find_mate_in_one()
 
@@ -382,8 +400,39 @@ class Board:
 
         return best_move
 
+    def _best_tablebase_move(self, moves):
+        """Select a move by probing every resulting tablebase position."""
+        if self.tablebase is None or self.tablebase.probe_wdl(self) is None:
+            return None
+
+        scored_moves = []
+        for move in moves:
+            child = self.copy()
+            if not child.move(move):
+                continue
+
+            if child.tablebase.probe_wdl(child) is None:
+                # A missing child table must not turn a known WDL position
+                # into a heuristic tablebase move.
+                return None
+
+            score = child.evaluate(child)
+            scored_moves.append((score, move))
+
+        if not scored_moves:
+            return None
+
+        if self.current_turn:
+            return min(scored_moves, key=lambda item: item[0])[1]
+        return max(scored_moves, key=lambda item: item[0])[1]
+
 
     def minimax(self, depth, alpha=float("-inf"), beta=float("inf")):
+        if self.tablebase is not None:
+            tablebase_score = self.evaluate(self)
+            if abs(tablebase_score) >= 100000:
+                return tablebase_score
+
         if depth == 0:
             return self.evaluate(self)
 
@@ -590,3 +639,32 @@ class Board:
         self.en_passant_square = en_passant
         self.halfmove_clock = halfmove_number
         self.fullmove_number = fullmove_number
+
+    def to_fen(self) -> str:
+        """Return the current position in standard Forsyth-Edwards notation."""
+        rows = []
+        for row in self.board:
+            empty = 0
+            notation = []
+            for piece in row:
+                if piece == "":
+                    empty += 1
+                else:
+                    if empty:
+                        notation.append(str(empty))
+                        empty = 0
+                    notation.append(piece.piece)
+            if empty:
+                notation.append(str(empty))
+            rows.append("".join(notation))
+
+        return " ".join(
+            (
+                "/".join(rows),
+                "w" if self.current_turn else "b",
+                self.castling_rights or "-",
+                self.en_passant_square,
+                str(self.halfmove_clock),
+                str(self.fullmove_number),
+            )
+        )

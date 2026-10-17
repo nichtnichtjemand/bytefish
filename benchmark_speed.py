@@ -79,8 +79,8 @@ def main() -> None:
     parser.add_argument(
         "--repeats",
         type=int,
-        default=3,
-        help="number of samples per benchmark (default: 3)",
+        default=30,
+        help="number of samples per benchmark (default: 30)",
     )
     args = parser.parse_args()
 

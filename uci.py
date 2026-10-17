@@ -1,6 +1,7 @@
 
 from board import Board
 from move import Move
+from syzygy import SyzygyTablebase
 
 
 def uci_move_to_string(move: Move) -> str:
@@ -128,6 +129,7 @@ def main() -> None:
         if command == "uci":
             print("id name Bytefish")
             print("id author nichtnichtjemand")
+            print("option name SyzygyPath type string default")
             print("uciok")
 
         elif command == "isready":
@@ -135,6 +137,23 @@ def main() -> None:
 
         elif command == "ucinewgame":
             board.reset()
+
+        elif command.startswith("setoption name SyzygyPath"):
+            prefix = "setoption name SyzygyPath"
+            path = command[len(prefix):].strip()
+            if path.startswith("value "):
+                path = path[6:].strip()
+            if not path:
+                print("info string SyzygyPath requires a directory")
+                continue
+            try:
+                tablebase = SyzygyTablebase(path)
+                if board.tablebase is not None:
+                    board.tablebase.close()
+                board.tablebase = tablebase
+                print(f"info string Syzygy tablebases loaded from {path}")
+            except (FileNotFoundError, OSError, ValueError) as error:
+                print(f"info string Could not load Syzygy tablebases: {error}")
 
         elif command.startswith("position "):
             handle_position(board, command)

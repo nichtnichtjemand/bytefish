@@ -20,12 +20,15 @@ sudo apt install pypy3
 ### 4. Now you can start the engine
 - You against Bytefish:
 ```
-xboard -scp "pypy3 /path/to/your/bytefish/uci.py" -sd "/the/project/bytefish" -sUCI
+xboard -scp "/path/to/your/bytefish/start_bot.sh" -sd "/the/project/bytefish" -sUCI
 ```
 - It against itself, if you want to do that, you will need to change Mode to "2 Chess Programs":
 ```
-xboard -fcp "pypy3 /path/to/your/bytefish/uci.py" -fd "/the/project/bytefish" -fUCI -scp "pypy3 /the/project/bytefish/uci.py" -sd "/the/project/bytefish" -sUCI
+xboard -fcp "/path/to/your/bytefish/start_bot.sh" -fd "/the/project/bytefish" -fUCI -scp "/the/project/bytefish/start_bot.sh" -sd "/the/project/bytefish" -sUCI
 ```
+
+Before starting, install the project dependencies with `uv sync`. The start script
+uses the project virtual environment and therefore also loads the Syzygy reader.
 ## How to install and use (Windows (Not tested, so it probably doesn't work!))
 ### 1. Go to where you want to put the project in
 ### 2. Clone it:
@@ -53,7 +56,14 @@ git clone https://github.com/nichtnichtjemand/bytefish.git
 - Chess Rules, Check and Checkmate
 - Minimax and Alpha-Beta-Pruning
 - History Heuristic
+- Syzygy tablebases for positions with up to five pieces (when available in `../syzygy` or `BYTEFISH_SYZYGY_PATH`)
 - Working on Depth 4 normally, takes about 20 seconds per move
+
+The UCI option `SyzygyPath` can be used to configure another tablebase directory:
+
+```
+setoption name SyzygyPath value /path/to/syzygy
+```
 ## To-Do
 - Castling and En Passant
 ## Contribute
