@@ -49,7 +49,7 @@ def make_benchmarks(depth: int) -> list[Benchmark]:
         return piece.is_legal_move(board, opening_move)
 
     def apply_move() -> object:
-        test_board = Board()
+        test_board = board.copy()
         test_board.move(opening_move)
         return test_board
 
