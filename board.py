@@ -268,7 +268,7 @@ class Board:
         return rating
 
     def copy(self):
-        new_board = Board()
+        new_board = object.__new__(Board)
 
         new_board.board = [row[:] for row in self.board]
         new_board.current_turn = self.current_turn
@@ -383,7 +383,7 @@ class Board:
             child = self.copy()
             child.move(move)
 
-            score = child.minimax(depth, alpha, beta)
+            score = child.minimax(depth - 1, alpha, beta)
 
             if self.current_turn:
                 if score < best_score:

@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+import sys
 
 from board import Board
 from move import Move
@@ -115,6 +117,9 @@ def handle_go(board: Board, command: str) -> None:
 
 
 def main() -> None:
+    # UCI engines usually communicate through pipes, where stdout is otherwise
+    # block-buffered and responses would not reach the GUI immediately.
+    sys.stdout.reconfigure(line_buffering=True)
     board = Board()
 
     while True:

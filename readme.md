@@ -20,11 +20,11 @@ sudo apt install pypy3
 ### 4. Now you can start the engine
 - You against Bytefish:
 ```
-xboard -scp "/path/to/your/bytefish/start_bot.sh" -sd "/the/project/bytefish" -sUCI
+xboard -scp "/path/to/your/bytefish/start_bot.sh" -sd "/path/to/your/bytefish" -sUCI
 ```
 - It against itself, if you want to do that, you will need to change Mode to "2 Chess Programs":
 ```
-xboard -fcp "/path/to/your/bytefish/start_bot.sh" -fd "/the/project/bytefish" -fUCI -scp "/the/project/bytefish/start_bot.sh" -sd "/the/project/bytefish" -sUCI
+xboard -fcp "/path/to/your/bytefish/start_bot.sh" -fd "/path/to/your/bytefish" -fUCI -scp "/path/to/your/bytefish/start_bot.sh" -sd "/path/to/your/bytefish" -sUCI
 ```
 
 Before starting, install the project dependencies with `uv sync`. The start script
