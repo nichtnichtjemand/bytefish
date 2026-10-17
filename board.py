@@ -1,7 +1,13 @@
+import time
+
 from move import Move
 from piece import Piece
 import piece_square_tables as tables
 from syzygy import SyzygyTablebase
+
+
+class SearchTimeout(Exception):
+    """Raised when the UCI search budget has expired."""
 
 
 class Board:
@@ -355,13 +361,15 @@ class Board:
         return board.get_material_score() + board.get_position_score()
     
 
-    def best_move(self, depth):
+    def best_move(self, depth, deadline=None):
         moves = self.order_moves(self.get_legal_moves())
 
         if not moves:
             return None
 
-        tablebase_move = self._best_tablebase_move(moves)
+        self._check_deadline(deadline)
+
+        tablebase_move = self._best_tablebase_move(moves, deadline)
         if tablebase_move is not None:
             return tablebase_move
 
@@ -380,10 +388,11 @@ class Board:
             best_score = float("-inf") 
 
         for move in moves:
+            self._check_deadline(deadline)
             child = self.copy()
             child.move(move)
 
-            score = child.minimax(depth - 1, alpha, beta)
+            score = child.minimax(depth - 1, alpha, beta, deadline)
 
             if self.current_turn:
                 if score < best_score:
@@ -400,13 +409,20 @@ class Board:
 
         return best_move
 
-    def _best_tablebase_move(self, moves):
+    @staticmethod
+    def _check_deadline(deadline):
+        if deadline is not None:
+            if time.monotonic() >= deadline:
+                raise SearchTimeout
+
+    def _best_tablebase_move(self, moves, deadline=None):
         """Select a move by probing every resulting tablebase position."""
         if self.tablebase is None or self.tablebase.probe_wdl(self) is None:
             return None
 
         scored_moves = []
         for move in moves:
+            self._check_deadline(deadline)
             child = self.copy()
             if not child.move(move):
                 continue
@@ -427,7 +443,15 @@ class Board:
         return max(scored_moves, key=lambda item: item[0])[1]
 
 
-    def minimax(self, depth, alpha=float("-inf"), beta=float("inf")):
+    def minimax(
+        self,
+        depth,
+        alpha=float("-inf"),
+        beta=float("inf"),
+        deadline=None,
+    ):
+        self._check_deadline(deadline)
+
         if self.tablebase is not None:
             tablebase_score = self.evaluate(self)
             if abs(tablebase_score) >= 100000:
@@ -451,10 +475,11 @@ class Board:
             best_score = float("inf")
 
             for move in moves:
+                self._check_deadline(deadline)
                 child = self.copy()
                 child.move(move)
 
-                score = child.minimax(depth - 1, alpha, beta)
+                score = child.minimax(depth - 1, alpha, beta, deadline)
                 best_score = min(best_score, score)
                 beta = min(beta, best_score)
 
@@ -472,10 +497,11 @@ class Board:
             best_score = float("-inf")
 
             for move in moves:
+                self._check_deadline(deadline)
                 child = self.copy()
                 child.move(move)
 
-                score = child.minimax(depth - 1, alpha, beta)
+                score = child.minimax(depth - 1, alpha, beta, deadline)
                 best_score = max(best_score, score)
                 alpha = max(alpha, best_score)
 

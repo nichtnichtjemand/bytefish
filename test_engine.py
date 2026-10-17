@@ -3,7 +3,7 @@ import pytest
 from board import Board
 from move import Move
 from piece import Piece
-from uci import parse_uci_move, uci_move_to_string
+from uci import handle_go, handle_position, parse_uci_move, uci_move_to_string
 
 
 def make_move(from_field, to_field):
@@ -71,6 +71,17 @@ def test_fen_round_trip():
     board.load_fen(fen)
 
     assert board.to_fen() == fen
+
+
+def test_uci_position_accepts_fen_and_moves():
+    board = Board()
+
+    handle_position(
+        board,
+        "position fen 8/8/8/8/8/8/4P3/4K2k w - - 0 1 moves e2e4",
+    )
+
+    assert board.to_fen() == "8/8/8/8/4P3/8/8/4K2k b - - 0 1"
 
 
 def test_syzygy_probe_for_five_or_fewer_pieces():

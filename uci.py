@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 import sys
+import time
 
-from board import Board
+from board import Board, SearchTimeout
 from move import Move
 from syzygy import SyzygyTablebase
 
@@ -84,6 +85,8 @@ def handle_position(board: Board, command: str) -> None:
 def handle_go(board: Board, command: str) -> None:
     parts = command.split()
     depth = 4
+    has_depth_limit = "depth" in parts
+    deadline = None
 
     if "depth" in parts:
         try:
@@ -101,13 +104,85 @@ def handle_go(board: Board, command: str) -> None:
             print("info string Invalid depth")
             return
 
+    def parse_milliseconds(name):
+        if name not in parts:
+            return None
+
+        try:
+            value = int(parts[parts.index(name) + 1])
+        except (ValueError, IndexError):
+            raise ValueError(f"Invalid {name}") from None
+
+        if value < 0:
+            raise ValueError(f"Invalid {name}")
+        return value
+
+    try:
+        movetime = parse_milliseconds("movetime")
+        white_time = parse_milliseconds("wtime")
+        black_time = parse_milliseconds("btime")
+        white_increment = parse_milliseconds("winc") or 0
+        black_increment = parse_milliseconds("binc") or 0
+        moves_to_go = parse_milliseconds("movestogo")
+    except ValueError as error:
+        print(f"info string {error}")
+        return
+
+    if moves_to_go == 0:
+        print("info string Invalid movestogo")
+        return
+
+    if movetime is not None:
+        # movetime is a maximum, not a requirement. Leave time for the GUI
+        # and avoid spending the whole allocation on a stable shallow search.
+        budget = movetime / 1000 * 0.8
+    else:
+        remaining = white_time if board.current_turn else black_time
+        increment = white_increment if board.current_turn else black_increment
+
+        if remaining is not None:
+            moves = moves_to_go or 30
+            budget = remaining / 1000 / moves + increment / 1000 * 0.8
+            budget = min(budget, remaining / 1000 * 0.25)
+        else:
+            budget = None
+
+    if budget is not None:
+        # Keep a small safety margin for UCI output and scheduling delays.
+        deadline = time.monotonic() + max(0.001, budget * 0.95)
+
     moves = board.get_legal_moves()
 
     if not moves:
         print("bestmove 0000")
         return
 
-    best_move = board.best_move(depth)
+    if deadline is None:
+        best_move = board.best_move(depth)
+    else:
+        best_move = moves[0]
+        # The last fully completed iteration is always a legal fallback.
+        max_depth = depth if has_depth_limit else 64
+        stable_move = None
+        stable_depths = 0
+        for current_depth in range(1, max_depth + 1):
+            try:
+                candidate = board.best_move(current_depth, deadline)
+            except SearchTimeout:
+                break
+            if candidate is not None:
+                best_move = candidate
+                if stable_move == uci_move_to_string(candidate):
+                    stable_depths += 1
+                else:
+                    stable_move = uci_move_to_string(candidate)
+                    stable_depths = 1
+
+                # Four plies are already the engine's normal search depth.
+                # If the best move has not changed for two completed
+                # iterations, deeper search is usually not worth the time.
+                if not has_depth_limit and current_depth >= 4 and stable_depths >= 2:
+                    break
 
     if best_move is None:
         print("bestmove 0000")

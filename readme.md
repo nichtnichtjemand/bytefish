@@ -64,6 +64,22 @@ The UCI option `SyzygyPath` can be used to configure another tablebase directory
 ```
 setoption name SyzygyPath value /path/to/syzygy
 ```
+
+The engine accepts standard UCI time controls. Clock time is divided into
+small per-move budgets (with a safety reserve), and `movetime` is treated as a
+maximum rather than a requirement. The search also stops early when the best
+move remains stable:
+
+```
+go wtime 30000 btime 30000 winc 500 binc 500 movestogo 20
+go movetime 1000
+```
+
+Positions can be sent with a complete FEN, optionally followed by moves:
+
+```
+position fen r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1 moves e1g1
+```
 ## To-Do
 - Castling and En Passant
 ## Contribute
