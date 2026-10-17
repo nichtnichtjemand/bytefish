@@ -148,6 +148,18 @@ def handle_go(board: Board, command: str) -> None:
             budget = None
 
     if budget is not None:
+        if board.is_endgame():
+            # Sparse positions have fewer meaningful candidate moves. Do not
+            # spend a long movetime allocation after the position is stable.
+            piece_count = board._piece_count()
+            if piece_count <= 6:
+                endgame_cap = 0.5
+            elif piece_count <= 8:
+                endgame_cap = 1.0
+            else:
+                endgame_cap = 3.0
+            budget = min(budget, endgame_cap)
+
         # Keep a small safety margin for UCI output and scheduling delays.
         deadline = time.monotonic() + max(0.001, budget * 0.95)
 
@@ -165,6 +177,7 @@ def handle_go(board: Board, command: str) -> None:
         max_depth = depth if has_depth_limit else 64
         stable_move = None
         stable_depths = 0
+        endgame = board.is_endgame()
         for current_depth in range(1, max_depth + 1):
             try:
                 candidate = board.best_move(current_depth, deadline)
@@ -181,7 +194,13 @@ def handle_go(board: Board, command: str) -> None:
                 # Four plies are already the engine's normal search depth.
                 # If the best move has not changed for two completed
                 # iterations, deeper search is usually not worth the time.
-                if not has_depth_limit and current_depth >= 4 and stable_depths >= 2:
+                minimum_depth = 3 if endgame else 4
+                required_stable_depths = 1 if endgame else 2
+                if (
+                    not has_depth_limit
+                    and current_depth >= minimum_depth
+                    and stable_depths >= required_stable_depths
+                ):
                     break
 
     if best_move is None:

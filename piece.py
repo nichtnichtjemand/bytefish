@@ -69,7 +69,7 @@ class Piece:
                 return (
                     target != ""
                     and target.color != self.color
-                )
+                ) or board.is_en_passant(move)
 
             return False
 

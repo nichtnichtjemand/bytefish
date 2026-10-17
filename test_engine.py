@@ -81,7 +81,45 @@ def test_uci_position_accepts_fen_and_moves():
         "position fen 8/8/8/8/8/8/4P3/4K2k w - - 0 1 moves e2e4",
     )
 
-    assert board.to_fen() == "8/8/8/8/4P3/8/8/4K2k b - - 0 1"
+    assert board.to_fen() == "8/8/8/8/4P3/8/8/4K2k b - e3 0 1"
+
+
+def test_endgame_rewards_passed_pawn_and_active_king():
+    board = Board()
+    board.load_fen("8/4k3/8/8/8/8/P7/4K3 w - - 0 1")
+
+    assert board.get_endgame_score() < 0
+    assert board._is_passed_pawn(6, 0, True)
+    assert board.is_endgame()
+
+
+def test_endgame_does_not_call_blocked_pawn_passed():
+    board = Board()
+    board.load_fen("4k3/8/8/8/8/1p6/P7/4K3 w - - 0 1")
+
+    assert not board._is_passed_pawn(6, 0, True)
+
+
+def test_six_piece_endgame_is_detected():
+    board = Board()
+    board.load_fen("4k3/8/8/3p4/8/8/P6P/4K2N w - - 0 1")
+
+    assert board._piece_count() == 6
+    assert board.is_endgame()
+
+
+def test_six_piece_position_prefers_capture_into_tablebase():
+    class TablebaseAfterCapture:
+        def probe_wdl(self, position):
+            return 1 if position._piece_count() <= 5 else None
+
+    board = Board(tablebase=TablebaseAfterCapture())
+    board.load_fen("4k3/7p/8/8/8/8/P2pR3/4K2N w - - 0 1")
+
+    move = board.best_move(1)
+
+    assert move.to_field == "d2"
+    assert move.from_field in ("e1", "e2")
 
 
 def test_syzygy_probe_for_five_or_fewer_pieces():
@@ -92,6 +130,22 @@ def test_syzygy_probe_for_five_or_fewer_pieces():
     board.load_fen("7k/8/8/8/8/8/6Q1/7K w - - 0 1")
 
     assert board.tablebase.probe_wdl(board) == 2
+
+
+def test_tablebase_move_uses_dtz_after_wdl():
+    class FakeTablebase:
+        def probe_wdl(self, position):
+            return 2
+
+        def probe_dtz(self, position):
+            return 4 if position.board[5][0] != "" else 12
+
+    board = Board(tablebase=FakeTablebase())
+    board.load_fen("4k3/8/8/8/8/8/P6P/4K3 w - - 0 1")
+
+    move = board.best_move(1)
+
+    assert move.from_field == "a2"
 
 
 def test_tablebase_move_selection_ignores_search_depth():
@@ -211,6 +265,32 @@ def test_valid_move_changes_turn():
     assert board.current_turn is True
     assert board.move(make_move("e2", "e4"))
     assert board.current_turn is False
+
+
+def test_white_en_passant_capture():
+    board = Board()
+    board.load_fen("4k3/8/8/3pP3/8/8/8/4K3 w - d6 0 2")
+
+    assert board.move(parse_uci_move("e5d6", board))
+    assert board.board[2][3].piece == "P"
+    assert board.board[3][3] == ""
+    assert board.en_passant_square == "-"
+
+
+def test_black_en_passant_capture():
+    board = Board()
+    board.load_fen("4k3/8/8/8/3pP3/8/8/4K3 b - e3 0 2")
+
+    assert board.move(parse_uci_move("d4e3", board))
+    assert board.board[5][4].piece == "p"
+    assert board.board[4][4] == ""
+
+
+def test_double_pawn_move_sets_en_passant_square():
+    board = Board()
+
+    assert board.move(parse_uci_move("e2e4", board))
+    assert board.en_passant_square == "e3"
 
 
 def test_cannot_move_empty_square():

@@ -52,6 +52,17 @@ class SyzygyTablebase:
         except (KeyError, RuntimeError, ValueError):
             return None
 
+    def probe_dtz(self, board: Board) -> int | None:
+        """Return Syzygy DTZ from the side-to-move perspective, if available."""
+        if self._tablebase is None or self._piece_count(board) > 5:
+            return None
+
+        chess_board = chess.Board(board.to_fen())
+        try:
+            return int(self._tablebase.probe_dtz(chess_board))
+        except (KeyError, RuntimeError, ValueError):
+            return None
+
     @staticmethod
     def _piece_count(board: Board) -> int:
         return sum(

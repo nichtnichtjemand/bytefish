@@ -60,6 +60,8 @@ class Board:
         to_piece = self.board[to_row][to_column]
         if from_piece == "":
             return False
+
+        is_en_passant = self.is_en_passant(move)
         if to_piece != "":
             if from_piece.color == to_piece.color:
                 return False
@@ -87,11 +89,15 @@ class Board:
             self.board[from_row][rook_to_column] = rook
             self.board[from_row][rook_from_column] = ""
             self._remove_castling_rights(from_piece)
-            self.current_turn = not self.current_turn
+            self._finish_move(move, from_piece, to_piece)
             return True
 
         if not from_piece.is_legal_move(self, move):
             return False
+
+        if is_en_passant:
+            captured_row = to_row + (1 if from_piece.color else -1)
+            self.board[captured_row][to_column] = ""
         
         if from_piece.type == "p" and to_row in (0, 7):
             promotion = move.promotion or "q"
@@ -113,9 +119,62 @@ class Board:
 
         self.board[from_row][from_column] = ""
         self._update_castling_rights(move, from_piece, to_piece)
-        self.current_turn = not self.current_turn
+        self._finish_move(
+            move,
+            from_piece,
+            to_piece,
+            is_capture=to_piece != "" or is_en_passant,
+        )
 
         return True
+
+    def is_en_passant(self, move):
+        """Return whether move is a legal en-passant capture shape."""
+        if self.en_passant_square == "-":
+            return False
+
+        from_piece = self.board[move.from_row][move.from_column]
+        target = self.board[move.to_row][move.to_column]
+        if from_piece == "" or from_piece.type != "p" or target != "":
+            return False
+
+        if move.to_field.lower() != self.en_passant_square.lower():
+            return False
+
+        direction = -1 if from_piece.color else 1
+        if move.to_row - move.from_row != direction:
+            return False
+        if abs(move.to_column - move.from_column) != 1:
+            return False
+
+        captured = self.board[move.from_row][move.to_column]
+        return (
+            captured != ""
+            and captured.type == "p"
+            and captured.color != from_piece.color
+        )
+
+    def _finish_move(self, move, from_piece, to_piece, is_capture=False):
+        """Update clocks and the en-passant target after a successful move."""
+        was_double_pawn_move = (
+            from_piece.type == "p"
+            and abs(move.to_row - move.from_row) == 2
+        )
+        self.en_passant_square = "-"
+        if was_double_pawn_move:
+            target_row = (move.from_row + move.to_row) // 2
+            self.en_passant_square = (
+                f"{move.from_field[0].lower()}{8 - target_row}"
+            )
+
+        if from_piece.type == "p" or is_capture:
+            self.halfmove_clock = 0
+        else:
+            self.halfmove_clock += 1
+
+        self.current_turn = not self.current_turn
+        if self.current_turn:
+            self.fullmove_number += 1
 
     def _can_castle(self, move):
         row = move.from_row
@@ -348,6 +407,80 @@ class Board:
 
         return score
 
+    def _piece_count(self):
+        return sum(
+            piece != ""
+            for row in self.board
+            for piece in row
+        )
+
+    def is_endgame(self):
+        """Return whether the position is sparse enough for endgame rules."""
+        return self._piece_count() - 2 <= 10
+
+    def _is_passed_pawn(self, row, column, color):
+        """Return whether a pawn has no opposing pawn blocking its files."""
+        enemy_pawn = "p" if color else "P"
+        for enemy_row in range(8):
+            enemy = self.board[enemy_row][column]
+            if enemy != "" and enemy.piece == enemy_pawn:
+                if (color and enemy_row < row) or (not color and enemy_row > row):
+                    return False
+            for adjacent_column in (column - 1, column + 1):
+                if 0 <= adjacent_column < 8:
+                    enemy = self.board[enemy_row][adjacent_column]
+                    if enemy != "" and enemy.piece == enemy_pawn:
+                        if (color and enemy_row < row) or (
+                            not color and enemy_row > row
+                        ):
+                            return False
+        return True
+
+    def get_endgame_score(self):
+        """Score king activity and pawn races once the queens are gone."""
+        non_king_pieces = self._piece_count() - 2
+        if not self.is_endgame():
+            return 0
+
+        score = 0
+        center_row, center_column = 3.5, 3.5
+
+        for row in range(8):
+            for column in range(8):
+                piece = self.board[row][column]
+                if piece == "":
+                    continue
+
+                sign = -1 if piece.color else 1
+                if piece.type == "k":
+                    distance = abs(row - center_row) + abs(column - center_column)
+                    score += sign * int((7 - distance) * 12)
+                elif piece.type == "p":
+                    rank = 7 - row if piece.color else row
+                    score += sign * rank * 8
+                    if self._is_passed_pawn(row, column, piece.color):
+                        score += sign * (35 + rank * 12)
+
+        return score
+
+    def _endgame_move_bonus(self, move):
+        """Prioritize promotion races, passed pawns, and active kings."""
+        piece = self.board[move.from_row][move.from_column]
+        if piece == "":
+            return 0
+
+        bonus = 0
+        if piece.type == "p":
+            if move.to_row in (0, 7):
+                bonus += 900
+            elif self._is_passed_pawn(move.from_row, move.from_column, piece.color):
+                bonus += 120
+        elif piece.type == "k":
+            old_distance = abs(move.from_row - 3.5) + abs(move.from_column - 3.5)
+            new_distance = abs(move.to_row - 3.5) + abs(move.to_column - 3.5)
+            if new_distance < old_distance:
+                bonus += 45
+        return bonus
 
 
     def evaluate(self, board):
@@ -358,7 +491,8 @@ class Board:
                 perspective = -1 if board.current_turn else 1
                 return perspective * wdl * 100000
 
-        return board.get_material_score() + board.get_position_score()
+        score = board.get_material_score() + board.get_position_score()
+        return score + board.get_endgame_score()
     
 
     def best_move(self, depth, deadline=None):
@@ -372,6 +506,12 @@ class Board:
         tablebase_move = self._best_tablebase_move(moves, deadline)
         if tablebase_move is not None:
             return tablebase_move
+
+        tablebase_transition = self._best_tablebase_transition_move(
+            moves, deadline
+        )
+        if tablebase_transition is not None:
+            return tablebase_transition
 
         mate_move = self.find_mate_in_one()
 
@@ -433,14 +573,72 @@ class Board:
                 return None
 
             score = child.evaluate(child)
-            scored_moves.append((score, move))
+            probe_dtz = getattr(child.tablebase, "probe_dtz", None)
+            dtz = probe_dtz(child) if probe_dtz is not None else None
+            scored_moves.append((score, dtz, move))
 
         if not scored_moves:
             return None
 
-        if self.current_turn:
-            return min(scored_moves, key=lambda item: item[0])[1]
-        return max(scored_moves, key=lambda item: item[0])[1]
+        return self._select_tablebase_move(scored_moves)
+
+    def _select_tablebase_move(self, scored_moves):
+        """Select by root WDL first, then by DTZ when WDL is equal."""
+        root_scores = [
+            (-score if self.current_turn else score, dtz, move)
+            for score, dtz, move in scored_moves
+        ]
+        best_root_score = max(item[0] for item in root_scores)
+        candidates = [
+            item for item in root_scores if item[0] == best_root_score
+        ]
+
+        if len(candidates) == 1:
+            return candidates[0][2]
+
+        root_dtz = [
+            abs(item[1])
+            for item in candidates
+            if item[1] is not None
+        ]
+        if not root_dtz:
+            return candidates[0][2]
+
+        if best_root_score < 0:
+            # When losing, delay the zeroing move if no drawing/winning move
+            # exists. This is the usual defensive DTZ preference.
+            wanted_dtz = max(root_dtz)
+        else:
+            # When winning or drawing, reach a zeroing move quickly.
+            wanted_dtz = min(root_dtz)
+
+        return next(
+            item[2] for item in candidates
+            if item[1] is not None and abs(item[1]) == wanted_dtz
+        )
+
+    def _best_tablebase_transition_move(self, moves, deadline=None):
+        """Prefer a capture that makes a six-piece position tablebase-known."""
+        if self.tablebase is None or self._piece_count() != 6:
+            return None
+
+        scored_moves = []
+        for move in moves:
+            self._check_deadline(deadline)
+            child = self.copy()
+            if not child.move(move) or child._piece_count() > 5:
+                continue
+
+            wdl = child.tablebase.probe_wdl(child)
+            if wdl is not None:
+                probe_dtz = getattr(child.tablebase, "probe_dtz", None)
+                dtz = probe_dtz(child) if probe_dtz is not None else None
+                scored_moves.append((child.evaluate(child), dtz, move))
+
+        if not scored_moves:
+            return None
+
+        return self._select_tablebase_move(scored_moves)
 
 
     def minimax(
@@ -528,7 +726,10 @@ class Board:
             if to_piece != "":
                 piece_values = {"p": 1, "n": 3, "b": 3, "r": 5, "q": 9, "k": 0}
                 score += 1000 + (piece_values[to_piece.piece.lower()] * 10 - piece_values[from_piece.piece.lower()])
-            
+
+            if self.is_endgame():
+                score += self._endgame_move_bonus(move)
+
             key = (move.from_row, move.from_column, move.to_row, move.to_column)
             score += self.history.get(key, 0)
             return score
