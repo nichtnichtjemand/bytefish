@@ -1,7 +1,7 @@
 from std.collections import Optional
 
 
-struct Move(Copyable):
+struct Move(Copyable, ImplicitlyCopyable):
     var from_field: String
     var to_field: String
     var promotion: Optional[String]
@@ -35,6 +35,12 @@ struct Move(Copyable):
                 self.from_row = -1
                 self.to_column = -1
                 self.to_row = -1
+        except:
+            # Falls ein Index-Fehler oder Parsing-Fehler auftritt
+            self.from_column = -1
+            self.from_row = -1
+            self.to_column = -1
+            self.to_row = -1
 
     def __copyinit__(out self, other: Self):
         self.from_field = other.from_field
@@ -44,12 +50,6 @@ struct Move(Copyable):
         self.from_row = other.from_row
         self.to_column = other.to_column
         self.to_row = other.to_row
-        except:
-            # Falls ein Index-Fehler oder Parsing-Fehler auftritt
-            self.from_column = -1
-            self.from_row = -1
-            self.to_column = -1
-            self.to_row = -1
 
     def __str__(self) -> String:
         var promo_str = String("")

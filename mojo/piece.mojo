@@ -2,7 +2,7 @@ from move import Move
 from board import Board
 
 
-struct Piece(Copyable):
+struct Piece(Copyable, ImplicitlyCopyable):
     var color: Bool
     var piece: String
     var type: String
@@ -32,7 +32,7 @@ struct Piece(Copyable):
 
         var target = board.board[move.to_row][move.to_column]
 
-        if target != "" and target.color == self.color:
+        if target.piece != "" and target.color == self.color:
             return False
 
         if self.type == "r":
@@ -48,37 +48,37 @@ struct Piece(Copyable):
             return False
 
         if self.type == "p":
-            direction = -1 if self.color else 1
+            var direction = -1 if self.color else 1
 
-            start_row = 6 if self.color else 1
+            var start_row = 6 if self.color else 1
 
-            row_diff = move.to_row - move.from_row
-            column_diff = abs(move.to_column - move.from_column)
+            var row_diff = move.to_row - move.from_row
+            var column_diff = abs(move.to_column - move.from_column)
 
             if column_diff == 0:
-                if target != "":
+                if target.piece != "":
                     return False
 
                 if row_diff == direction:
                     return True
 
                 if move.from_row == start_row and row_diff == 2 * direction:
-                    middle_row = move.from_row + direction
+                    var middle_row = move.from_row + direction
 
-                    return board.board[middle_row][move.from_column] == ""
+                    return board.board[middle_row][move.from_column].piece == ""
 
                 return False
 
             if column_diff == 1 and row_diff == direction:
                 return (
-                    target != "" and target.color != self.color
+                    target.piece != "" and target.color != self.color
                 ) or board.is_en_passant(move)
 
             return False
 
         if self.type == "b":
-            row_diff = abs(move.from_row - move.to_row)
-            column_diff = abs(move.from_column - move.to_column)
+            var row_diff = abs(move.from_row - move.to_row)
+            var column_diff = abs(move.from_column - move.to_column)
 
             if row_diff == column_diff and row_diff >= 1:
                 return self._is_path_clear(board, move)
@@ -86,12 +86,12 @@ struct Piece(Copyable):
             return False
 
         if self.type == "q":
-            row_diff = abs(move.from_row - move.to_row)
-            column_diff = abs(move.from_column - move.to_column)
+            var row_diff = abs(move.from_row - move.to_row)
+            var column_diff = abs(move.from_column - move.to_column)
 
-            is_diagonal = row_diff == column_diff and row_diff >= 1
+            var is_diagonal = row_diff == column_diff and row_diff >= 1
 
-            is_straight = (
+            var is_straight = (
                 move.from_row == move.to_row
                 and move.from_column != move.to_column
             ) or (
@@ -105,8 +105,8 @@ struct Piece(Copyable):
             return False
 
         if self.type == "k":
-            row_diff = abs(move.from_row - move.to_row)
-            column_diff = abs(move.from_column - move.to_column)
+            var row_diff = abs(move.from_row - move.to_row)
+            var column_diff = abs(move.from_column - move.to_column)
 
             return (
                 row_diff <= 1
@@ -115,8 +115,8 @@ struct Piece(Copyable):
             )
 
         if self.type == "n":
-            row_diff = abs(move.from_row - move.to_row)
-            column_diff = abs(move.from_column - move.to_column)
+            var row_diff = abs(move.from_row - move.to_row)
+            var column_diff = abs(move.from_column - move.to_column)
 
             return (row_diff == 1 and column_diff == 2) or (
                 row_diff == 2 and column_diff == 1
@@ -124,7 +124,7 @@ struct Piece(Copyable):
 
         return False
 
-    def _is_path_clear(self, board: Board, move: Move):
+    def _is_path_clear(self, board: Board, move: Move) -> Bool:
         var row_step = Int(move.to_row > move.from_row) - Int(
             move.to_row < move.from_row
         )
@@ -137,7 +137,7 @@ struct Piece(Copyable):
         var column = move.from_column + col_step
 
         while row != move.to_row or column != move.to_column:
-            if board.board[row][column] != "":
+            if board.board[row][column].piece != "":
                 return False
 
             row += row_step
@@ -145,7 +145,7 @@ struct Piece(Copyable):
 
         return True
 
-    def get_candidate_moves(self, board: Board, row: Int, column: Int):
+    def get_candidate_moves(self, board: Board, row: Int, column: Int) -> List[Move]:
         var moves = List[Move]()
 
         # --- SPRINGER (Knight) ---
@@ -237,13 +237,13 @@ struct Piece(Copyable):
                 while self._in_bounds(r, c):
                     moves.append(self._create_move(row, column, r, c))
 
-                    if board.board[r][c] != "":
+                    if board.board[r][c].piece != "":
                         break
 
                     r += dr
                     c += dc
 
-        return moves
+        return moves^
 
     def _in_bounds(self, row: Int, column: Int) -> Bool:
         return 0 <= row < 8 and 0 <= column < 8
