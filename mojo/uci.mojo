@@ -1,6 +1,4 @@
-#!/usr/bin/env python3
-import sys
-import time
+from std.python import Python
 
 from board import Board, SearchTimeout
 from move import Move
@@ -333,6 +331,3 @@ def main() -> None:
         elif command == "quit":
             break
 
-
-if __name__ == "__main__":
-    main()
