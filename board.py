@@ -25,6 +25,8 @@ class Board:
         ]
         self.current_turn = True # True = White, False = Black
         self.history = {}
+        self.transposition_table = {}
+        self.repetition_counts = {}
         self.board = []
         for row in setup:
             new_row = []
@@ -43,6 +45,7 @@ class Board:
             default_path = SyzygyTablebase.default_path()
             if default_path is not None:
                 self.tablebase = SyzygyTablebase(default_path)
+        self._record_position()
 
 
 
@@ -125,6 +128,7 @@ class Board:
             to_piece,
             is_capture=to_piece != "" or is_en_passant,
         )
+        self._record_position()
 
         return True
 
@@ -175,6 +179,27 @@ class Board:
         self.current_turn = not self.current_turn
         if self.current_turn:
             self.fullmove_number += 1
+
+    def _position_key(self):
+        """Return the repetition identity, excluding move counters."""
+        return (
+            tuple(
+                piece.piece if piece != "" else ""
+                for row in self.board
+                for piece in row
+            ),
+            self.current_turn,
+            self.castling_rights,
+            self.en_passant_square,
+        )
+
+    def _record_position(self):
+        key = self._position_key()
+        self.repetition_counts[key] = self.repetition_counts.get(key, 0) + 1
+
+    def is_threefold_repetition(self):
+        """Return whether the current position has occurred three times."""
+        return self.repetition_counts.get(self._position_key(), 0) >= 3
 
     def _can_castle(self, move):
         row = move.from_row
@@ -344,6 +369,8 @@ class Board:
         new_board.fullmove_number = self.fullmove_number
 
         new_board.history = self.history.copy()
+        new_board.transposition_table = self.transposition_table
+        new_board.repetition_counts = self.repetition_counts.copy()
         new_board.tablebase = self.tablebase
 
         return new_board
@@ -388,6 +415,9 @@ class Board:
         self.halfmove_clock = 0
         self.fullmove_number = 1
         self.history = {}
+        self.transposition_table = {}
+        self.repetition_counts = {}
+        self._record_position()
 
 
     def get_position_score(self):
@@ -437,8 +467,7 @@ class Board:
         return True
 
     def get_endgame_score(self):
-        """Score king activity and pawn races once the queens are gone."""
-        non_king_pieces = self._piece_count() - 2
+        """Score king activity, pawn races, and opposition in sparse positions."""
         if not self.is_endgame():
             return 0
 
@@ -460,8 +489,63 @@ class Board:
                     score += sign * rank * 8
                     if self._is_passed_pawn(row, column, piece.color):
                         score += sign * (35 + rank * 12)
+                        # A king that supports its passer is more valuable
+                        # than a passer whose promotion square is unreachable.
+                        king_distance = self._distance_to_king(
+                            row, column, piece.color
+                        )
+                        score += sign * max(0, 24 - king_distance * 4)
+
+        # Reward the side to move for taking the opposition in king-and-pawn
+        # endings.  The tempo is often the deciding endgame resource.
+        if self._piece_count() <= 4:
+            kings = self._king_squares()
+            if len(kings) == 2 and self.current_turn:
+                score += self._opposition_score(kings)
+            elif len(kings) == 2:
+                score -= self._opposition_score(kings)
 
         return score
+
+    def _king_squares(self):
+        return [
+            (row, column)
+            for row in range(8)
+            for column in range(8)
+            if (
+                self.board[row][column] != ""
+                and self.board[row][column].type == "k"
+            )
+        ]
+
+    def _distance_to_king(self, row, column, color):
+        king = next(
+            (
+                (king_row, king_column)
+                for king_row in range(8)
+                for king_column in range(8)
+                if (
+                    self.board[king_row][king_column] != ""
+                    and self.board[king_row][king_column].type == "k"
+                    and self.board[king_row][king_column].color == color
+                )
+            ),
+            None,
+        )
+        if king is None:
+            return 8
+        return max(abs(row - king[0]), abs(column - king[1]))
+
+    @staticmethod
+    def _opposition_score(kings):
+        (first_row, first_column), (second_row, second_column) = kings
+        if first_column != second_column and first_row != second_row:
+            return 0
+        distance = max(
+            abs(first_row - second_row),
+            abs(first_column - second_column),
+        )
+        return 10 if distance % 2 == 0 else -10
 
     def get_hanging_piece_score(self):
         """Penalize non-king pieces that can be taken without protection."""
@@ -489,6 +573,92 @@ class Board:
                 penalty = piece_values[piece.type]
                 score += penalty if piece.color else -penalty
 
+        return score
+
+    def get_pawn_structure_score(self):
+        """Score pawn weaknesses and useful pawn formations."""
+        score = 0
+        pawns_by_file = {True: [0] * 8, False: [0] * 8}
+
+        for row in range(8):
+            for column in range(8):
+                piece = self.board[row][column]
+                if piece != "" and piece.type == "p":
+                    pawns_by_file[piece.color][column] += 1
+
+        for color in (True, False):
+            sign = -1 if color else 1
+            pawns = pawns_by_file[color]
+            for column, count in enumerate(pawns):
+                if count > 1:
+                    score += sign * (count - 1) * 12
+                if count == 0:
+                    continue
+
+                has_neighbour = (
+                    column > 0 and pawns[column - 1] > 0
+                ) or (
+                    column < 7 and pawns[column + 1] > 0
+                )
+                if not has_neighbour:
+                    score += sign * count * 14
+
+        return score
+
+    def get_mobility_score(self):
+        """Reward useful space and active non-pawn pieces."""
+        piece_weights = {"n": 4, "b": 4, "r": 2, "q": 1, "k": 1}
+        score = 0
+        for row in range(8):
+            for column in range(8):
+                piece = self.board[row][column]
+                if piece == "" or piece.type not in piece_weights:
+                    continue
+                mobility = sum(
+                    self.board[move.to_row][move.to_column] == ""
+                    or self.board[move.to_row][move.to_column].color != piece.color
+                    for move in piece.get_candidate_moves(self, row, column)
+                )
+                sign = -1 if piece.color else 1
+                score += sign * mobility * piece_weights[piece.type]
+        return score
+
+    def get_king_safety_score(self):
+        """Reward a pawn shield while the queens are still on the board."""
+        if not any(
+            piece != "" and piece.type == "q"
+            for row in self.board
+            for piece in row
+        ):
+            return 0
+
+        score = 0
+        for color in (True, False):
+            king = next(
+                (
+                    (row, column)
+                    for row in range(8)
+                    for column in range(8)
+                    if (
+                        self.board[row][column] != ""
+                        and self.board[row][column].type == "k"
+                        and self.board[row][column].color == color
+                    )
+                ),
+                None,
+            )
+            if king is None:
+                continue
+            row, column = king
+            pawn_row = row - 1 if color else row + 1
+            shield = 0
+            if 0 <= pawn_row < 8:
+                for shield_column in range(max(0, column - 1), min(8, column + 2)):
+                    piece = self.board[pawn_row][shield_column]
+                    if piece != "" and piece.type == "p" and piece.color == color:
+                        shield += 1
+            sign = -1 if color else 1
+            score += sign * shield * 12
         return score
 
     def _endgame_move_bonus(self, move):
@@ -520,6 +690,10 @@ class Board:
                 return perspective * wdl * 100000
 
         score = board.get_material_score() + board.get_position_score()
+        score += board.get_pawn_structure_score()
+        score += board.get_mobility_score()
+        score += board.get_king_safety_score()
+        score += board.get_hanging_piece_score()
         return score + board.get_endgame_score()
     
 
@@ -678,13 +852,26 @@ class Board:
     ):
         self._check_deadline(deadline)
 
+        if self.is_threefold_repetition() or self.halfmove_clock >= 100:
+            return 0
+
         if self.tablebase is not None:
             tablebase_score = self.evaluate(self)
             if abs(tablebase_score) >= 100000:
                 return tablebase_score
 
-        if depth == 0:
-            return self.evaluate(self)
+        if depth <= 0:
+            return self.quiescence(alpha, beta, deadline)
+
+        transposition_key = (
+            self._position_key(),
+            depth,
+            self.halfmove_clock,
+            self.repetition_counts.get(self._position_key(), 0),
+        )
+        cached_score = self.transposition_table.get(transposition_key)
+        if cached_score is not None:
+            return cached_score
 
         moves = self.order_moves(self.get_legal_moves())
 
@@ -697,6 +884,7 @@ class Board:
 
             return 0
 
+        cutoff = False
         if self.current_turn:
             best_score = float("inf")
 
@@ -710,6 +898,7 @@ class Board:
                 beta = min(beta, best_score)
 
                 if beta <= alpha:
+                    cutoff = True
                     key = (
                         move.from_row,
                         move.from_column,
@@ -732,6 +921,7 @@ class Board:
                 alpha = max(alpha, best_score)
 
                 if beta <= alpha:
+                    cutoff = True
                     key = (
                         move.from_row,
                         move.from_column,
@@ -741,11 +931,15 @@ class Board:
                     self.history[key] = self.history.get(key, 0) + depth * depth
                     break
 
+        if not cutoff:
+            self.transposition_table[transposition_key] = best_score
         return best_score
 
-    def quiescence(self, alpha, beta, deadline=None, remaining_depth=4):
+    def quiescence(self, alpha, beta, deadline=None, remaining_depth=2):
         """Resolve forcing captures before accepting a leaf evaluation."""
         self._check_deadline(deadline)
+        if self.is_threefold_repetition() or self.halfmove_clock >= 100:
+            return 0
         legal_moves = self.get_legal_moves()
         in_check = self.is_in_check(self.current_turn)
 
@@ -977,6 +1171,8 @@ class Board:
         self.en_passant_square = en_passant
         self.halfmove_clock = halfmove_number
         self.fullmove_number = fullmove_number
+        self.repetition_counts = {}
+        self._record_position()
 
     def to_fen(self) -> str:
         """Return the current position in standard Forsyth-Edwards notation."""

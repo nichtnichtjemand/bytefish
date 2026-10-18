@@ -113,6 +113,14 @@ def test_quiescence_sees_immediate_capture():
     assert board.quiescence(float("-inf"), float("inf")) > 300
 
 
+def test_minimax_uses_quiescence_at_search_leaf():
+    board = Board()
+    board.tablebase = None
+    board.load_fen("4k3/8/8/8/8/3q4/4R3/K7 w - - 0 1")
+
+    assert board.minimax(0) > 300
+
+
 def test_losing_position_is_marked_for_defensive_search():
     board = Board()
     board.load_fen("4k3/8/8/8/8/3q4/8/4K3 w - - 0 1")
@@ -162,6 +170,18 @@ def test_endgame_does_not_call_blocked_pawn_passed():
     board.load_fen("4k3/8/8/8/8/1p6/P7/4K3 w - - 0 1")
 
     assert not board._is_passed_pawn(6, 0, True)
+
+
+def test_threefold_repetition_is_tracked_in_played_positions():
+    board = Board()
+    board.load_fen("4k2n/8/8/8/8/8/8/N3K3 w - - 0 1")
+    cycle = ("a1c2", "h8f7", "c2a1", "f7h8")
+
+    for notation in cycle + cycle:
+        assert board.move(parse_uci_move(notation, board))
+
+    assert board.is_threefold_repetition()
+    assert board.minimax(2) == 0
 
 
 def test_six_piece_endgame_is_detected():

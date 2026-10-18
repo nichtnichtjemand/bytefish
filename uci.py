@@ -65,7 +65,9 @@ def position_time_factor(board: Board, moves) -> tuple[float, bool]:
     elif len(moves) <= 12:
         factor -= 0.15
     if board.is_endgame():
-        factor -= 0.20
+        # Endgames need deeper quiet-move searches: a check is not
+        # automatically useful, and one wasted tempo can change the result.
+        factor += 0.25
     if captures >= 6:
         factor += 0.10
 
@@ -256,17 +258,10 @@ def handle_go(board: Board, command: str) -> None:
                     stable_move = uci_move_to_string(candidate)
                     stable_depths = 1
 
-                # Four plies are already the engine's normal search depth.
-                # If the best move has not changed for two completed
-                # iterations, deeper search is usually not worth the time.
-                minimum_depth = (
-                    3 if endgame and not tactical and not defensive_search else 4
-                )
-                required_stable_depths = (
-                    1
-                    if endgame and not tactical and not defensive_search
-                    else 3
-                )
+                # Do not stop on a stable shallow move in a quiet endgame:
+                # a waiting move or a pointless check can hide the real plan.
+                minimum_depth = 4
+                required_stable_depths = 3
                 if (
                     not has_depth_limit
                     and current_depth >= minimum_depth
