@@ -2,7 +2,7 @@ from move import Move
 from board import Board
 
 
-struct Piece(Copyable, ImplicitlyCopyable):
+struct Piece(Copyable, ImplicitlyCopyable, Movable):
     var color: Bool
     var piece: String
     var type: String
@@ -11,11 +11,6 @@ struct Piece(Copyable, ImplicitlyCopyable):
         self.color = piece != piece.lower()
         self.piece = piece
         self.type = piece.lower()
-
-    def __copyinit__(out self, other: Self):
-        self.color = other.color
-        self.piece = other.piece
-        self.type = other.type
 
     def is_legal_move(self, board: Board, move: Move) -> Bool:
         if (
@@ -145,48 +140,43 @@ struct Piece(Copyable, ImplicitlyCopyable):
 
         return True
 
-    def get_candidate_moves(self, board: Board, row: Int, column: Int) -> List[Move]:
+    def get_candidate_moves(
+        self, board: Board, row: Int, column: Int
+    ) raises -> List[Move]:
         var moves = List[Move]()
 
-        # --- SPRINGER (Knight) ---
         if self.type == "n":
             var offsets = [
-                Tuple(-2, -1),
-                Tuple(-2, 1),
-                Tuple(-1, -2),
-                Tuple(-1, 2),
-                Tuple(1, -2),
-                Tuple(1, 2),
-                Tuple(2, -1),
-                Tuple(2, 1),
+                (-2, -1),
+                (-2, 1),
+                (-1, -2),
+                (-1, 2),
+                (1, -2),
+                (1, 2),
+                (2, -1),
+                (2, 1),
             ]
 
             for offset in offsets:
-                var dr = offset[0]
-                var dc = offset[1]
-                var r = row + dr
-                var c = column + dc
+                var r = row + offset[0]
+                var c = column + offset[1]
 
                 if self._in_bounds(r, c):
                     moves.append(self._create_move(row, column, r, c))
 
-        # --- KÖNIG (King) ---
         elif self.type == "k":
             for dr in [-1, 0, 1]:
                 for dc in [-1, 0, 1]:
                     if dr == 0 and dc == 0:
                         continue
 
-                    # KORREKTUR: Einzelne Deklarationen statt "var r, c"
                     var r = row + dr
                     var c = column + dc
 
                     if self._in_bounds(r, c):
                         moves.append(self._create_move(row, column, r, c))
 
-        # --- BAUER (Pawn) ---
         elif self.type == "p":
-            # KORREKTUR: Mojo-Ternary Operator (Bedingung ? Wahr : Falsch)
             var direction = -1 if self.color else 1
             var start_row = 6 if self.color else 1
             var r = row + direction
@@ -207,29 +197,26 @@ struct Piece(Copyable, ImplicitlyCopyable):
                     moves.append(self._create_move(row, column, diag_r, diag_c))
 
         elif self.type == "r" or self.type == "b" or self.type == "q":
-            var directions = List[Tuple[Int, Int]]()
+            var directions = [
+                (-1, 0),
+                (1, 0),
+                (0, -1),
+                (0, 1),
+                (-1, -1),
+                (-1, 1),
+                (1, -1),
+                (1, 1),
+            ]
 
-            if self.type == "r" or self.type == "q":
-                var straight: List[Tuple[Int, Int]] = [
-                    (-1, 0),
-                    (1, 0),
-                    (0, -1),
-                    (0, 1),
-                ]
-                directions.extend(straight^)
+            for dir_index in range(len(directions)):
+                var dr = directions[dir_index][0]
+                var dc = directions[dir_index][1]
+                var is_diagonal = dr != 0 and dc != 0
 
-            if self.type == "b" or self.type == "q":
-                var diagonal: List[Tuple[Int, Int]] = [
-                    (-1, -1),
-                    (-1, 1),
-                    (1, -1),
-                    (1, 1),
-                ]
-                directions.extend(diagonal^)
-
-            for dir_tuple in directions:
-                var dr = dir_tuple[0]
-                var dc = dir_tuple[1]
+                if self.type == "r" and is_diagonal:
+                    continue
+                if self.type == "b" and not is_diagonal:
+                    continue
 
                 var r = row + dr
                 var c = column + dc
@@ -250,7 +237,7 @@ struct Piece(Copyable, ImplicitlyCopyable):
 
     def _create_move(
         self, from_row: Int, from_column: Int, to_row: Int, to_column: Int
-    ) -> Move:
+    ) raises -> Move:
         var from_field = chr(ord("a") + from_column) + String(8 - from_row)
         var to_field = chr(ord("a") + to_column) + String(8 - to_row)
 

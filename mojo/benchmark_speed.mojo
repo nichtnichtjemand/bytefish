@@ -1,100 +1,66 @@
-from __future__ import annotations
-
-import argparse
-import time
-from collections.abc import Callable
-
 from board import Board
-from move import Move
+from std.time import perf_counter
 
 
-Benchmark = tuple[str, Callable[[], object]]
+def run_operation(board: Board, operation: Int) raises -> Int:
+    if operation == 0:
+        return len(board.get_legal_moves())
+    if operation == 1:
+        var copied = board.copy()
+        return len(copied.board)
+    if operation == 2:
+        return board.evaluate()
+    if operation == 3:
+        return Int(board.is_square_attacked(7, 4, False))
+    if operation == 4:
+        return len(board.order_moves(board.get_legal_moves()))
+    if operation == 5:
+        var searched = Board()
+        var best = searched.best_move(1)
+        if best:
+            return 1
+        return 0
+    return 0
 
 
-def measure(name: str, operation: Callable[[], object], repeats: int) -> None:
-    """Measure an operation and print the average and best runtime."""
-    samples = []
+def measure(name: String, repeats: Int, operation: Int, board: Board) raises:
+    var warmup_result = run_operation(board, operation)
+    var total = 0.0
+    var best = Float64(1.0e30)
+    var checksum = 0
 
     for _ in range(repeats):
-        started = time.perf_counter()
-        operation()
-        samples.append(time.perf_counter() - started)
+        var start = perf_counter()
+        var result = run_operation(board, operation)
+        checksum += result
+        var elapsed = perf_counter() - start
 
-    average = sum(samples) / len(samples)
-    best = min(samples)
-    print(f"{name:<28} avg {average * 1000:>9.2f} ms   best {best * 1000:>9.2f} ms")
+        total += elapsed
+        if elapsed < best:
+            best = elapsed
 
+    var average = total / Float64(repeats)
 
-def make_benchmarks(depth: int) -> list[Benchmark]:
-    board = Board()
-    opening_move = Move("e2", "e4")
-
-    def generate_legal_moves() -> object:
-        return board.get_legal_moves()
-
-    def copy_board() -> object:
-        return board.copy()
-
-    def evaluate_position() -> object:
-        return board.evaluate(board)
-
-    def check_attacks() -> object:
-        return board.is_square_attacked(7, 4, False)
-
-    def order_moves() -> object:
-        return board.order_moves(board.get_legal_moves())
-
-    def validate_move() -> object:
-        piece = board.board[opening_move.from_row][opening_move.from_column]
-        return piece.is_legal_move(board, opening_move)
-
-    def apply_move() -> object:
-        test_board = board.copy()
-        test_board.move(opening_move)
-        return test_board
-
-    def search() -> object:
-        return Board().best_move(depth)
-
-    return [
-        ("legal move generation", generate_legal_moves),
-        ("board copy", copy_board),
-        ("position evaluation", evaluate_position),
-        ("attack detection", check_attacks),
-        ("move ordering", order_moves),
-        ("single move validation", validate_move),
-        ("apply move", apply_move),
-        (f"best move (depth {depth})", search),
-    ]
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Benchmark Bytefish engine operations")
-    parser.add_argument(
-        "--depth",
-        type=int,
-        default=2,
-        help="search depth for the complete search benchmark (default: 2)",
+    print(
+        name,
+        " avg ",
+        average * 1000.0,
+        " ms   best ",
+        best * 1000.0,
+        " ms",
     )
-    parser.add_argument(
-        "--repeats",
-        type=int,
-        default=30,
-        help="number of samples per benchmark (default: 30)",
-    )
-    args = parser.parse_args()
-
-    if args.depth < 1:
-        parser.error("--depth must be at least 1")
-    if args.repeats < 1:
-        parser.error("--repeats must be at least 1")
-
-    print(f"Bytefish speed benchmark: depth={args.depth}, repeats={args.repeats}")
-    print("-" * 76)
-
-    for name, operation in make_benchmarks(args.depth):
-        measure(name, operation, args.repeats)
+    print("  checksum ", checksum)
 
 
-if __name__ == "__main__":
-    main()
+def main() raises:
+    var board = Board()
+
+    print("Bytefish Mojo benchmark")
+    print("-----------------------")
+
+    measure("legal move generation", 30, 0, board)
+    measure("board copy", 30, 1, board)
+    measure("position evaluation", 30, 2, board)
+    measure("attack detection", 30, 3, board)
+    measure("move ordering", 30, 4, board)
+    measure("best move depth 1", 1, 5, board)

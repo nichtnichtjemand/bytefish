@@ -1,61 +1,100 @@
+from std.collections import List, Optional
+from std.time import monotonic
 from std.python import Python
 
-from board import Board, SearchTimeout
+from board import Board
 from move import Move
-from syzygy import SyzygyTablebase
 
 
 def calculate_search_budget(
-    remaining_ms,
-    increment_ms=0,
-    moves_to_go=None,
-    movetime_ms=None,
-    complexity=1.0,
-):
-    """Return a conservative budget before position-specific adjustments."""
-    if movetime_ms is not None:
-        return movetime_ms / 1000 * 0.7 * complexity
+    remaining_ms: Optional[Int],
+    increment_ms: Int = 0,
+    moves_to_go: Optional[Int] = None,
+    movetime_ms: Optional[Int] = None,
+    complexity: Float64 = 1.0,
+) -> Optional[Float64]:
+    if movetime_ms:
+        return Optional(
+            Float64(movetime_ms.value()) / 1000.0 * 0.8 * complexity
+        )
 
-    if remaining_ms is None:
+    if not remaining_ms:
         return None
 
-    remaining = remaining_ms / 1000
-    increment = increment_ms / 1000
+    var remaining = Float64(remaining_ms.value()) / 1000.0
+    var increment = Float64(increment_ms) / 1000.0
+    var base: Float64
 
-    if remaining <= 2:
+    if remaining <= 2.0:
         base = min(remaining * 0.10 + increment * 0.35, 0.12)
-        return base * complexity
-    if remaining <= 10:
+    elif remaining <= 10.0:
         base = min(remaining * 0.12 + increment * 0.5, 0.5)
-        return base * complexity
+    else:
+        var moves = 30
+        if moves_to_go:
+            if moves_to_go.value() > 0:
+                moves = moves_to_go.value()
+        base = min(
+            remaining / Float64(moves) + increment * 0.8, remaining * 0.20
+        )
 
-    moves = moves_to_go or 30
-    base = min(
-        remaining / moves + increment * 0.8,
-        remaining * 0.20,
-    )
-    return base * complexity
+    return Optional(base * complexity)
 
 
-def position_time_factor(board: Board, moves) -> tuple[float, bool]:
-    """Return a search multiplier and whether the position is tactical."""
-    captures = sum(
-        board.board[move.to_row][move.to_column] != ""
-        or board.is_en_passant(move)
-        for move in moves
-    )
-    promotions = sum(
-        move.promotion is not None
-        for move in moves
-    )
-    tactical = (
+def uci_move_to_string(move: Move) -> String:
+    var notation = move.from_field.lower() + move.to_field.lower()
+    if move.promotion:
+        notation += move.promotion.value().lower()
+    return notation
+
+
+def parse_uci_move(uci_move: String, board: Board) raises -> Move:
+    var notation = uci_move.lower()
+
+    if notation == "o-o" or notation == "0-0":
+        var rank = "1"
+        if not board.current_turn:
+            rank = "8"
+        return Move("e" + rank, "g" + rank)
+
+    if notation == "o-o-o" or notation == "0-0-0":
+        var rank = "1"
+        if not board.current_turn:
+            rank = "8"
+        return Move("e" + rank, "c" + rank)
+
+    if notation.byte_length() != 4 and notation.byte_length() != 5:
+        raise Error("Unsupported UCI move")
+
+    var from_field = String(notation[byte=0]) + String(notation[byte=1])
+    var to_field = String(notation[byte=2]) + String(notation[byte=3])
+    if notation.byte_length() == 5:
+        var promotion = String(notation[byte=4])
+        return Move(from_field, to_field, Optional(promotion))
+    return Move(from_field, to_field)
+
+
+def position_time_factor(
+    board: Board, moves: List[Move]
+) -> Tuple[Float64, Bool]:
+    var captures = 0
+    var promotions = 0
+
+    for move in moves:
+        if board.board[move.to_row][
+            move.to_column
+        ].piece != "" or board.is_en_passant(move):
+            captures += 1
+        if move.promotion:
+            promotions += 1
+
+    var tactical = (
         board.is_in_check(board.current_turn)
         or captures > 0
         or promotions > 0
         or len(moves) <= 5
     )
-
-    factor = 1.0
+    var factor = 1.0
     if tactical:
         factor += 0.35
     if len(moves) >= 35:
@@ -63,271 +102,242 @@ def position_time_factor(board: Board, moves) -> tuple[float, bool]:
     elif len(moves) <= 12:
         factor -= 0.15
     if board.is_endgame():
-        # Endgames need deeper quiet-move searches: a check is not
-        # automatically useful, and one wasted tempo can change the result.
         factor += 0.25
     if captures >= 6:
         factor += 0.10
 
-    return max(0.55, min(factor, 1.65)), tactical
+    return (max(0.55, min(factor, 1.65)), tactical)
 
 
-def uci_move_to_string(move: Move) -> str:
-    promotion = move.promotion.lower() if move.promotion else ""
-    return f"{move.from_field.lower()}{move.to_field.lower()}{promotion}"
+def _find_token(parts: List[String], token: String) -> Int:
+    for index in range(len(parts)):
+        if parts[index] == token:
+            return index
+    return -1
 
 
-def parse_uci_move(uci_move: str, board: Board | None = None) -> Move:
-    notation = uci_move.upper()
-
-    if notation in ("O-O", "0-0"):
-        rank = "1" if board is None or board.current_turn else "8"
-        return Move(f"e{rank}", f"g{rank}")
-
-    if notation in ("O-O-O", "0-0-0"):
-        rank = "1" if board is None or board.current_turn else "8"
-        return Move(f"e{rank}", f"c{rank}")
-
-    if len(uci_move) not in (4, 5):
-        raise ValueError(f"Unsupported UCI-Move: {uci_move}")
-
-    from_field = uci_move[:2]
-    to_field = uci_move[2:4]
-    promotion = uci_move[4].lower() if len(uci_move) == 5 else None
-
-    return Move(from_field, to_field, promotion)
+def _split_command(command: String) -> List[String]:
+    var split_parts = command.split(" ")
+    var parts = List[String]()
+    for part in split_parts:
+        var token = String(part)
+        if token != "":
+            parts.append(token)
+    return parts^
 
 
-def handle_position(board: Board, command: str) -> None:
-    parts = command.split()
+def _parse_clock_value(
+    parts: List[String], name: String
+) raises -> Optional[Int]:
+    var index = _find_token(parts, name)
+    if index < 0:
+        return None
+    if index + 1 >= len(parts):
+        raise Error("Invalid " + name)
+    var value = Int(parts[index + 1])
+    if value < 0:
+        raise Error("Invalid " + name)
+    return Optional(value)
 
+
+def handle_position(mut board: Board, command: String) raises:
+    var parts = _split_command(command)
     if len(parts) < 2:
         print("info string Invalid position command")
         return
 
+    var moves_index = _find_token(parts, "moves")
     if parts[1] == "startpos":
         board.reset()
-        moves_index = 2
-
+        if moves_index < 0:
+            return
     elif parts[1] == "fen":
-        if "moves" in parts:
-            moves_index = parts.index("moves")
-        else:
-            moves_index = len(parts)
-
-        fen_parts = parts[2:moves_index]
-
-        if len(fen_parts) != 6:
+        var fen_end = len(parts)
+        if moves_index >= 0:
+            fen_end = moves_index
+        if fen_end - 2 != 6:
             print("info string Invalid FEN")
             return
 
+        var fen = String(parts[2])
+        for index in range(3, fen_end):
+            fen += " " + parts[index]
         try:
-            board.load_fen(" ".join(fen_parts))
-        except ValueError as error:
-            print(f"info string Invalid FEN: {error}")
+            board.load_fen(fen)
+        except e:
+            print("info string Invalid FEN")
             return
-
+        if moves_index < 0:
+            return
     else:
         print("info string Unsupported position command")
         return
 
-    if "moves" not in parts:
-        return
-
-    for uci_move in parts[moves_index + 1:]:
+    for index in range(moves_index + 1, len(parts)):
+        var notation = parts[index]
         try:
-            move = parse_uci_move(uci_move, board)
-
+            var move = parse_uci_move(notation, board)
             if not board.move(move):
-                print(f"info string Illegal Move {uci_move}")
+                print("info string Illegal Move", notation)
                 return
-
-        except (ValueError, IndexError) as error:
-            print(f"info string Illegal Move {uci_move}: {error}")
+        except e:
+            print("info string Illegal Move", notation)
             return
 
 
-def handle_go(board: Board, command: str) -> None:
-    parts = command.split()
-    depth = 4
-    has_depth_limit = "depth" in parts
-    deadline = None
+def handle_go(mut board: Board, command: String) raises:
+    var parts = _split_command(command)
+    var depth = 4
+    var depth_index = _find_token(parts, "depth")
+    var has_depth_limit = depth_index >= 0
 
-    if "depth" in parts:
+    if has_depth_limit:
+        if depth_index + 1 >= len(parts):
+            print("info string Invalid depth")
+            return
         try:
-            depth_index = parts.index("depth")
-
-            if depth_index + 1 >= len(parts):
-                raise ValueError
-
-            depth = int(parts[depth_index + 1])
-
-            if depth < 1:
-                raise ValueError
-
-        except ValueError:
+            depth = Int(parts[depth_index + 1])
+        except e:
+            print("info string Invalid depth")
+            return
+        if depth < 1:
             print("info string Invalid depth")
             return
 
-    def parse_milliseconds(name):
-        if name not in parts:
-            return None
-
-        try:
-            value = int(parts[parts.index(name) + 1])
-        except (ValueError, IndexError):
-            raise ValueError(f"Invalid {name}") from None
-
-        if value < 0:
-            raise ValueError(f"Invalid {name}")
-        return value
+    var movetime: Optional[Int]
+    var white_time: Optional[Int]
+    var black_time: Optional[Int]
+    var white_increment = 0
+    var black_increment = 0
+    var moves_to_go: Optional[Int]
 
     try:
-        movetime = parse_milliseconds("movetime")
-        white_time = parse_milliseconds("wtime")
-        black_time = parse_milliseconds("btime")
-        white_increment = parse_milliseconds("winc") or 0
-        black_increment = parse_milliseconds("binc") or 0
-        moves_to_go = parse_milliseconds("movestogo")
-    except ValueError as error:
-        print(f"info string {error}")
+        movetime = _parse_clock_value(parts, "movetime")
+        white_time = _parse_clock_value(parts, "wtime")
+        black_time = _parse_clock_value(parts, "btime")
+        var winc = _parse_clock_value(parts, "winc")
+        var binc = _parse_clock_value(parts, "binc")
+        moves_to_go = _parse_clock_value(parts, "movestogo")
+        if winc:
+            white_increment = winc.value()
+        if binc:
+            black_increment = binc.value()
+    except e:
+        print("info string Invalid clock value")
         return
 
-    if moves_to_go == 0:
+    if moves_to_go and moves_to_go.value() == 0:
         print("info string Invalid movestogo")
         return
 
-    moves = board.get_legal_moves()
-    if not moves:
+    var moves = board.get_legal_moves()
+    if len(moves) == 0:
         print("bestmove 0000")
         return
 
-    complexity, tactical = position_time_factor(board, moves)
+    var factors = position_time_factor(board, moves)
+    var complexity = factors[0]
+    var tactical = factors[1]
+    var remaining: Optional[Int]
+    var increment: Int
+    if board.current_turn:
+        remaining = white_time
+        increment = white_increment
+    else:
+        remaining = black_time
+        increment = black_increment
 
-    remaining = None
-    if movetime is not None:
+    var budget: Optional[Float64]
+    if movetime:
         budget = calculate_search_budget(
-            None,
-            movetime_ms=movetime,
-            complexity=complexity,
+            None, movetime_ms=movetime, complexity=complexity
         )
     else:
-        remaining = white_time if board.current_turn else black_time
-        increment = white_increment if board.current_turn else black_increment
         budget = calculate_search_budget(
-            remaining,
-            increment,
-            moves_to_go,
-            complexity=complexity,
+            remaining, increment, moves_to_go, complexity=complexity
+        )
+    if budget:
+        print("info string budget:", budget.value())
+    else:
+        print("info string no budget")
+
+    var deadline: Optional[Float64] = None
+    if budget:
+        var safety = 0.95
+        if remaining and remaining.value() <= 2000:
+            safety = 0.85
+        deadline = Optional(
+            Float64(monotonic()) / 1_000_000_000.0
+            + max(0.001, budget.value() * safety)
         )
 
-    if budget is not None:
-        # Keep a larger safety margin for UCI output, lag, and clock updates.
-        safety = 0.75 if remaining is not None and remaining <= 2_000 else 0.85
-        deadline = time.monotonic() + max(0.001, budget * safety)
+    if not deadline:
+        var result = board.best_move(depth)
+        if result:
+            print("bestmove", uci_move_to_string(result.value()))
+        else:
+            print("bestmove 0000")
+        return
 
-    if deadline is None:
-        best_move = board.best_move(depth)
-    else:
-        best_move = moves[0]
-        # The last fully completed iteration is always a legal fallback.
-        max_depth = depth if has_depth_limit else 64
-        if not has_depth_limit and budget is not None:
-            if budget <= 0.15:
+    var ordered_moves = board.order_moves(moves)
+    var best_move = ordered_moves[0]
+    var max_depth = depth
+    if not has_depth_limit:
+        max_depth = 64
+        if budget:
+            if budget.value() <= 0.15:
                 max_depth = 2
-            elif budget <= 0.5:
+            elif budget.value() <= 0.5:
                 max_depth = 3
-        if tactical and not has_depth_limit:
-            max_depth = max(max_depth, 4)
-        stable_move = None
-        stable_depths = 0
-        endgame = board.is_endgame()
-        defensive_search = board.is_losing_for_side_to_move()
-        for current_depth in range(1, max_depth + 1):
-            try:
-                candidate = board.best_move(current_depth, deadline)
-            except SearchTimeout:
-                break
-            if candidate is not None:
-                best_move = candidate
-                if stable_move == uci_move_to_string(candidate):
-                    stable_depths += 1
-                else:
-                    stable_move = uci_move_to_string(candidate)
-                    stable_depths = 1
+        if tactical and max_depth < 4:
+            max_depth = 4
 
-                # Do not stop on a stable shallow move in a quiet endgame:
-                # a waiting move or a pointless check can hide the real plan.
-                minimum_depth = 4
-                required_stable_depths = 3
-                if (
-                    not has_depth_limit
-                    and current_depth >= minimum_depth
-                    and stable_depths >= required_stable_depths
-                    and not defensive_search
-                ):
-                    break
+    for current_depth in range(1, max_depth + 1):
+        try:
+            var candidate = board.best_move(current_depth, deadline)
+            if candidate:
+                best_move = candidate.value()
+        except e:
+            break
 
-    if best_move is None:
-        print("bestmove 0000")
-        return
-
-    print(f"bestmove {uci_move_to_string(best_move)}")
+    print("bestmove", uci_move_to_string(best_move))
 
 
-def main() -> None:
-    # UCI engines usually communicate through pipes, where stdout is otherwise
-    # block-buffered and responses would not reach the GUI immediately.
-    sys.stdout.reconfigure(line_buffering=True)
-    board = Board()
+def run() raises:
+    var board = Board()
+    var sys = Python.import_module("sys")
 
     while True:
-        try:
-            command = input().strip()
-        except EOFError:
-            break
-
-        if not command:
+        var line = sys.stdin.readline()
+        if line == "":
+            return
+        var stripped_line = line.strip()
+        var command = String(py=stripped_line)
+        var parts = _split_command(command)
+        if len(parts) == 0:
             continue
 
-        if command == "uci":
-            print("id name Bytefish")
+        if parts[0] == "uci":
+            print("id name Bytefish Mojo")
             print("id author nichtnichtjemand")
-            print("option name SyzygyPath type string default")
             print("uciok")
-
-        elif command == "isready":
+        elif parts[0] == "isready":
             print("readyok")
-
-        elif command == "ucinewgame":
+        elif parts[0] == "ucinewgame":
             board.reset()
-
-        elif command.startswith("setoption name SyzygyPath"):
-            prefix = "setoption name SyzygyPath"
-            path = command[len(prefix):].strip()
-            if path.startswith("value "):
-                path = path[6:].strip()
-            if not path:
-                print("info string SyzygyPath requires a directory")
-                continue
-            try:
-                tablebase = SyzygyTablebase(path)
-                if board.tablebase is not None:
-                    board.tablebase.close()
-                board.tablebase = tablebase
-                print(f"info string Syzygy tablebases loaded from {path}")
-            except (FileNotFoundError, OSError, ValueError) as error:
-                print(f"info string Could not load Syzygy tablebases: {error}")
-
-        elif command.startswith("position "):
+        elif parts[0] == "position":
             handle_position(board, command)
-
-        elif command == "go" or command.startswith("go "):
+        elif parts[0] == "go":
             handle_go(board, command)
+        elif parts[0] == "quit":
+            return
+        elif parts[0] == "stop":
+            continue
+        elif parts[0] == "setoption":
+            print("info string Byfish does not support this option")
 
-        elif command == "stop":
-            pass
+        sys.stdout.flush()
 
-        elif command == "quit":
-            break
 
+def main() raises:
+    run()
