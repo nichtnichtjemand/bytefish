@@ -14,9 +14,8 @@ def calculate_search_budget(
     complexity: Float64 = 1.0,
 ) -> Optional[Float64]:
     if movetime_ms:
-        return Optional(
-            Float64(movetime_ms.value()) / 1000.0 * 0.8 * complexity
-        )
+        var requested = Float64(movetime_ms.value()) / 1000.0
+        return Optional(min(requested * 0.8 * complexity, requested * 0.9))
 
     if not remaining_ms:
         return None
@@ -30,7 +29,7 @@ def calculate_search_budget(
     elif remaining <= 10.0:
         base = min(remaining * 0.12 + increment * 0.5, 0.5)
     else:
-        var moves = 30
+        var moves = 40
         if moves_to_go:
             if moves_to_go.value() > 0:
                 moves = moves_to_go.value()
@@ -38,7 +37,9 @@ def calculate_search_budget(
             remaining / Float64(moves) + increment * 0.8, remaining * 0.20
         )
 
-    return Optional(base * complexity)
+    # Keep time for later moves: complexity may raise the allocation by at
+    # most 10%, regardless of the position's raw complexity multiplier.
+    return Optional(min(base * complexity, base * 1.10))
 
 
 def uci_move_to_string(move: Move) -> String:
@@ -186,6 +187,7 @@ def handle_position(mut board: Board, command: String) raises:
 
 
 def handle_go(mut board: Board, command: String) raises:
+    var search_started_at = Float64(monotonic()) / 1_000_000_000.0
     var parts = _split_command(command)
     var depth = 4
     var depth_index = _find_token(parts, "depth")
@@ -267,8 +269,7 @@ def handle_go(mut board: Board, command: String) raises:
         if remaining and remaining.value() <= 2000:
             safety = 0.85
         deadline = Optional(
-            Float64(monotonic()) / 1_000_000_000.0
-            + max(0.001, budget.value() * safety)
+            search_started_at + max(0.001, budget.value() * safety)
         )
 
     if not deadline:

@@ -449,10 +449,32 @@ struct Board:
                     if not piece.is_legal_move(self, candidate):
                         continue
 
-                    var child = self.copy()
-                    if child._apply_unchecked(candidate):
-                        if not child.is_in_check(self.current_turn):
-                            result.append(candidate)
+                    if piece.type == "p" and (
+                        candidate.to_row == 0 or candidate.to_row == 7
+                    ):
+                        var promotion_types = List[String]()
+                        promotion_types.append("q")
+                        promotion_types.append("r")
+                        promotion_types.append("b")
+                        promotion_types.append("n")
+
+                        for promotion in promotion_types:
+                            var promoted_move = Move(
+                                candidate.from_field,
+                                candidate.to_field,
+                                Optional(promotion),
+                            )
+                            var promoted_child = self.copy()
+                            if promoted_child._apply_unchecked(promoted_move):
+                                if not promoted_child.is_in_check(
+                                    self.current_turn
+                                ):
+                                    result.append(promoted_move)
+                    else:
+                        var child = self.copy()
+                        if child._apply_unchecked(candidate):
+                            if not child.is_in_check(self.current_turn):
+                                result.append(candidate)
 
                 if piece.type == "k":
                     var kingside = Move(
@@ -481,6 +503,19 @@ struct Board:
         if piece.piece == "":
             return False
 
+        var promotion_piece = String("")
+        if piece.type == "p" and (move.to_row == 0 or move.to_row == 7):
+            if not move.promotion:
+                return False
+            promotion_piece = move.promotion.value().lower()
+            if (
+                promotion_piece != "q"
+                and promotion_piece != "r"
+                and promotion_piece != "b"
+                and promotion_piece != "n"
+            ):
+                return False
+
         var target = self.board[move.to_row][move.to_column]
         var capture = target.piece != ""
         var ep = self.is_en_passant(move)
@@ -508,13 +543,12 @@ struct Board:
                 self._set_square(move.from_row, 3, rook)
                 self._set_square(move.from_row, 0, Piece(""))
 
-        if piece.type == "p" and (move.to_row == 0 or move.to_row == 7):
-            var promotion = String("q")
-            if move.promotion:
-                promotion = move.promotion.value()
+        if promotion_piece != "":
             if piece.color:
-                promotion = promotion.upper()
-            self._set_square(move.to_row, move.to_column, Piece(promotion))
+                promotion_piece = promotion_piece.upper()
+            self._set_square(
+                move.to_row, move.to_column, Piece(promotion_piece)
+            )
 
         self._finish_move(move, piece, target, capture)
         return True
@@ -547,6 +581,7 @@ struct Board:
 
     def get_position_score(self) -> Int:
         var score = 0
+        var endgame = self.is_endgame()
 
         for row in range(8):
             for column in range(8):
@@ -571,7 +606,10 @@ struct Board:
                 elif piece.type == "q":
                     bonus = tables.queen_bonus(table_row, column)
                 elif piece.type == "k":
-                    bonus = tables.king_bonus(table_row, column)
+                    if endgame:
+                        bonus = tables.king_endgame_bonus(table_row, column)
+                    else:
+                        bonus = tables.king_bonus(table_row, column)
 
                 if piece.color:
                     score -= bonus
@@ -596,6 +634,54 @@ struct Board:
                 if piece.piece != "" and piece.type == "q":
                     queens += 1
         return queens == 0 or self._piece_count() <= 12
+
+    def is_insufficient_material(self) -> Bool:
+        var white_bishops = 0
+        var black_bishops = 0
+        var white_knights = 0
+        var black_knights = 0
+        var bishop_square_color = -1
+        var bishops_share_square_color = True
+
+        for row in range(8):
+            for column in range(8):
+                var piece = self.board[row][column]
+                if piece.piece == "" or piece.type == "k":
+                    continue
+                if piece.type == "p" or piece.type == "r" or piece.type == "q":
+                    return False
+                if piece.type == "n":
+                    if piece.color:
+                        white_knights += 1
+                    else:
+                        black_knights += 1
+                elif piece.type == "b":
+                    if piece.color:
+                        white_bishops += 1
+                    else:
+                        black_bishops += 1
+                    var square_color = (row + column) % 2
+                    if bishop_square_color < 0:
+                        bishop_square_color = square_color
+                    elif bishop_square_color != square_color:
+                        bishops_share_square_color = False
+                else:
+                    return False
+
+        var minor_count = (
+            white_bishops + black_bishops + white_knights + black_knights
+        )
+        if minor_count <= 1:
+            return True
+
+        return (
+            minor_count == 2
+            and white_bishops == 1
+            and black_bishops == 1
+            and white_knights == 0
+            and black_knights == 0
+            and bishops_share_square_color
+        )
 
     def _is_passed_pawn(self, row: Int, column: Int, color: Bool) -> Bool:
         var direction = -1
@@ -623,12 +709,10 @@ struct Board:
         return True
 
     def get_endgame_score(self) -> Int:
-        if self._piece_count() - 2 > 10:
+        if not self.is_endgame():
             return 0
 
         var score = 0
-        var center_row = 3.5
-        var center_column = 3.5
 
         for row in range(8):
             for column in range(8):
@@ -640,12 +724,7 @@ struct Board:
                 if piece.color:
                     sign = -1
 
-                if piece.type == "k":
-                    var distance = abs(Float64(row) - center_row) + abs(
-                        Float64(column) - center_column
-                    )
-                    score += sign * Int((7.0 - distance) * 12.0)
-                elif piece.type == "p":
+                if piece.type == "p":
                     var rank = 7 - row
                     if not piece.color:
                         rank = row
@@ -656,27 +735,37 @@ struct Board:
                             row, column, piece.color
                         )
                         score += sign * max(0, 24 - king_distance * 4)
+                elif piece.type == "r":
+                    for pawn_row in range(8):
+                        var pawn = self.board[pawn_row][column]
+                        if (
+                            pawn.piece == ""
+                            or pawn.type != "p"
+                            or not self._is_passed_pawn(
+                                pawn_row, column, pawn.color
+                            )
+                        ):
+                            continue
 
-        if self._piece_count() <= 4:
-            var white_king = self._find_king(True)
-            var black_king = self._find_king(False)
-            if white_king and black_king:
-                var white_pos = white_king.value()
-                var black_pos = black_king.value()
-                var opposition = 0
-                if (
-                    white_pos.column == black_pos.column
-                    or white_pos.row == black_pos.row
-                ):
-                    var distance = max(
-                        abs(white_pos.row - black_pos.row),
-                        abs(white_pos.column - black_pos.column),
-                    )
-                    opposition = 10 if distance % 2 == 0 else -10
-                if self.current_turn:
-                    score += opposition
-                else:
-                    score -= opposition
+                        var behind = False
+                        if pawn.color and row > pawn_row:
+                            behind = True
+                        elif not pawn.color and row < pawn_row:
+                            behind = True
+                        if behind:
+                            var path_clear = True
+                            var step = 1
+                            if row < pawn_row:
+                                step = -1
+                            var scan_row = pawn_row + step
+                            while scan_row != row:
+                                if self.board[scan_row][column].piece != "":
+                                    path_clear = False
+                                    break
+                                scan_row += step
+                            if path_clear:
+                                score += sign * 20
+                                break
 
         return score
 
@@ -875,7 +964,16 @@ struct Board:
         )
 
     def _position_key(self) -> String:
-        return self.to_fen()
+        var fields = self.to_fen().split(" ")
+        return (
+            String(fields[0])
+            + " "
+            + String(fields[1])
+            + " "
+            + String(fields[2])
+            + " "
+            + String(fields[3])
+        )
 
     def _record_position(mut self) raises:
         var key = self._position_key()
@@ -990,13 +1088,20 @@ struct Board:
     ) raises -> Int:
         Self._check_deadline(deadline)
 
-        if self.is_threefold_repetition() or self.halfmove_clock >= 100:
+        var drawn = (
+            self.is_threefold_repetition()
+            or self.halfmove_clock >= 100
+            or self.is_insufficient_material()
+        )
+        if drawn:
+            if self.is_in_check(self.current_turn):
+                if len(self.get_legal_moves()) == 0:
+                    if self.current_turn:
+                        return MATE_SCORE
+                    return -MATE_SCORE
             return 0
 
         var in_check = self.is_in_check(self.current_turn)
-        if in_check and remaining_depth == 0:
-            return self.evaluate()
-
         var local_alpha = alpha
         var local_beta = beta
         var best_score: Int
@@ -1008,7 +1113,7 @@ struct Board:
                 best_score = -INF
         else:
             best_score = self.evaluate()
-            if remaining_depth == 0:
+            if remaining_depth <= 0:
                 return best_score
             if self.current_turn:
                 if best_score < local_beta:
@@ -1083,7 +1188,17 @@ struct Board:
     ) raises -> Int:
         Self._check_deadline(deadline)
 
-        if self.is_threefold_repetition() or self.halfmove_clock >= 100:
+        var drawn = (
+            self.is_threefold_repetition()
+            or self.halfmove_clock >= 100
+            or self.is_insufficient_material()
+        )
+        if drawn:
+            if self.is_in_check(self.current_turn):
+                if len(self.get_legal_moves()) == 0:
+                    if self.current_turn:
+                        return MATE_SCORE + depth
+                    return -MATE_SCORE - depth
             return 0
 
         if depth <= 0:

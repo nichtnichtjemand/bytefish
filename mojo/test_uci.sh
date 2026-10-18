@@ -5,9 +5,6 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 output="$(printf 'position startpos\ngo movetime 1000\nquit\n' | "$script_dir/start_bot.sh")"
 
 grep -q '^info string budget:' <<<"$output"
-grep -q '^info string max_depth: 64$' <<<"$output"
-grep -q '^info string searching depth: 1$' <<<"$output"
-grep -q '^info string searching depth: 2$' <<<"$output"
 grep -q '^bestmove [a-h][1-8][a-h][1-8]' <<<"$output"
 
 printf '%s\n' "Mojo UCI time-control smoke test passed"

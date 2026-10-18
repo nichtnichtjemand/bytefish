@@ -70,6 +70,11 @@ small per-move budgets (with a safety reserve), and `movetime` is treated as a
 maximum rather than a requirement. The search also stops early when the best
 move remains stable:
 
+Without `movestogo`, clock allocation assumes 40 moves remain and scales down
+with the current clock. Tactical positions can add at most 10% to that
+allocation, preserving time for later moves. A `movetime` request is kept below
+its limit even in tactical positions.
+
 ```
 go wtime 30000 btime 30000 winc 500 binc 500 movestogo 20
 go movetime 1000
