@@ -218,6 +218,15 @@ def handle_go(
     var depth = 5
     var depth_index = _find_token(parts, "depth")
     var has_depth_limit = depth_index >= 0
+    var pondering = _find_token(parts, "ponder") >= 0
+    var infinite = _find_token(parts, "infinite") >= 0
+
+    board.search_control[0] = False
+    board.search_control[1] = pondering
+    board.search_control[2] = None
+    board.search_control[3] = 0.0
+    board.search_control[4] = False
+    board.search_control[5] = 0
 
     if has_depth_limit:
         if depth_index + 1 >= len(parts):
@@ -274,6 +283,7 @@ def handle_go(
                 token == "wtime" or token == "btime" or token == "winc"
                 or token == "binc" or token == "movestogo"
                 or token == "movetime" or token == "depth"
+                or token == "ponder" or token == "infinite"
             ):
                 break
 
@@ -338,9 +348,12 @@ def handle_go(
         var usable_time = (
             budget.value() * safety - Float64(move_overhead_ms) / 1000.0
         )
+        board.search_control[3] = max(0.001, usable_time)
+    if budget and not pondering:
+        var usable_time = Float64(String(py=board.search_control[3]))
         deadline = Optional(search_started_at + max(0.001, usable_time))
 
-    if not deadline:
+    if not deadline and not pondering and not infinite:
         var best = moves[0]
         var previous_best: Optional[Move] = None
         var total_nodes = 0
@@ -393,7 +406,9 @@ def handle_go(
     var max_depth = depth
     var previous_best: Optional[Move] = None
     var total_nodes = 0
-    if not has_depth_limit:
+    if (pondering or infinite) and not has_depth_limit:
+        max_depth = 64
+    elif not has_depth_limit:
         max_depth = 64
         if budget:
             if budget.value() <= 0.15:
@@ -406,7 +421,7 @@ def handle_go(
     for current_depth in range(1, max_depth + 1):
         try:
             var candidate: Optional[Move]
-            if workers > 1 and budget and budget.value() >= 0.8:
+            if workers > 1 and not pondering and budget and budget.value() >= 0.8:
                 candidate = board.best_move_two_workers(
                     current_depth,
                     deadline,
@@ -445,7 +460,8 @@ def handle_go(
             break
 
     print_search_totals(total_nodes, search_started_at)
-    print("bestmove", uci_move_to_string(best_move))
+    if String(py=board.search_control[4]) != "True":
+        print("bestmove", uci_move_to_string(best_move))
 
 
 def run() raises:
@@ -478,6 +494,8 @@ def run() raises:
             handle_position(board, command)
         elif parts[0] == "go":
             handle_go(board, command, move_overhead_ms, workers)
+            if String(py=board.search_control[4]) == "True":
+                return
         elif parts[0] == "perft":
             if len(parts) < 2:
                 print("info string perft requires a depth")
@@ -493,7 +511,7 @@ def run() raises:
         elif parts[0] == "quit":
             return
         elif parts[0] == "stop":
-            continue
+            board.search_control[0] = True
         elif parts[0] == "setoption":
             var name_index = _find_token(parts, "name")
             var value_index = _find_token(parts, "value")

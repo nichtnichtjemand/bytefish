@@ -56,6 +56,12 @@ go wtime 30000 btime 30000 winc 500 binc 500 movestogo 20
 go movetime 1000
 ```
 
+UCI pondering is supported. Send the anticipated opponent move as part of the
+`position` command, then start `go ponder`. The engine searches that position
+without using the clock. `ponderhit` starts the normal clock budget for the
+current side; `stop` ends the search and returns its best move, and `quit`
+exits without emitting a move.
+
 Time management is position-aware: tactical positions (check, captures,
 promotions, or very few legal moves) receive more time, while quiet positions
 and simple endgames receive less. Legal-move count, material phase, increment,

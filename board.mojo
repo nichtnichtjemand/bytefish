@@ -30,6 +30,9 @@ struct Board:
     var repetition_counts: List[String]
     var last_search_score: Int
     var last_search_nodes: Int
+    # A Python list is deliberately shared by all board copies made during
+    # search. It carries UCI stop/ponder state into the recursive search.
+    var search_control: PythonObject
 
     def __init__(out self, empty: Bool = False) raises:
         self.current_turn = True
@@ -41,6 +44,14 @@ struct Board:
         self.repetition_counts = List[String]()
         self.last_search_score = 0
         self.last_search_nodes = 0
+        var builtins = Python.import_module("builtins")
+        self.search_control = builtins.list()
+        self.search_control.append(False)  # stop requested
+        self.search_control.append(False)  # pondering
+        self.search_control.append(None)   # active deadline
+        self.search_control.append(0.0)    # time budget after ponderhit
+        self.search_control.append(False)  # quit requested
+        self.search_control.append(0)      # input polling counter
         if not empty:
             self.reset()
 
@@ -92,6 +103,7 @@ struct Board:
         result.repetition_counts = self.repetition_counts.copy()
         result.last_search_score = self.last_search_score
         result.last_search_nodes = self.last_search_nodes
+        result.search_control = self.search_control
 
         return result^
 
@@ -1192,7 +1204,7 @@ struct Board:
         deadline: Optional[Float64] = None,
         remaining_depth: Int = 2,
     ) raises -> Int:
-        Self._check_deadline(deadline)
+        self._check_deadline(deadline)
         self.last_search_nodes = 1
 
         var drawn = (
@@ -1259,7 +1271,7 @@ struct Board:
         var ordered = self.order_moves(tactical_moves)
 
         for move in ordered:
-            Self._check_deadline(deadline)
+            self._check_deadline(deadline)
 
             var child = self.copy()
             child.last_search_nodes = 0
@@ -1295,7 +1307,7 @@ struct Board:
         beta: Int = INF,
         deadline: Optional[Float64] = None,
     ) raises -> Int:
-        Self._check_deadline(deadline)
+        self._check_deadline(deadline)
 
         # Quiescence already checks repetition, move-count draws and
         # insufficient material, so send horizon nodes there before doing
@@ -1336,7 +1348,7 @@ struct Board:
             best_score = INF
 
             for move in ordered:
-                Self._check_deadline(deadline)
+                self._check_deadline(deadline)
                 var child = self.copy()
                 child.last_search_nodes = 0
 
@@ -1360,7 +1372,7 @@ struct Board:
             best_score = -INF
 
             for move in ordered:
-                Self._check_deadline(deadline)
+                self._check_deadline(deadline)
                 var child = self.copy()
                 child.last_search_nodes = 0
 
@@ -1391,7 +1403,7 @@ struct Board:
         preferred_move: Optional[Move] = None,
     ) raises -> Optional[Move]:
         self.last_search_nodes = 0
-        Self._check_deadline(deadline)
+        self._check_deadline(deadline)
         self.last_search_nodes = 1
         var moves = self.get_legal_moves()
         if root_moves:
@@ -1452,7 +1464,7 @@ struct Board:
             best_score = -INF
 
         for move in ordered:
-            Self._check_deadline(deadline)
+            self._check_deadline(deadline)
 
             var child = self.copy()
             child.last_search_nodes = 0
@@ -1622,8 +1634,41 @@ struct Board:
             return Optional(child_move)
         return parent_result
 
-    @staticmethod
-    def _check_deadline(deadline: Optional[Float64]) raises:
+    def _check_deadline(self, deadline: Optional[Float64]) raises:
+        # Poll stdin from inside search so UCI's synchronous outer loop still
+        # reacts promptly to stop, ponderhit, quit, and isready.
+        var poll_count = Int(String(py=self.search_control[5])) + 1
+        self.search_control[5] = poll_count
+        if poll_count >= 256:
+            self.search_control[5] = 0
+            var select = Python.import_module("select")
+            var sys = Python.import_module("sys")
+            var ready = select.select([sys.stdin], [], [], 0.0)
+            if len(ready[0]) > 0:
+                var raw = sys.stdin.readline()
+                var incoming = String(py=raw.strip())
+                if incoming == "stop":
+                    self.search_control[0] = True
+                    self.search_control[1] = False
+                elif incoming == "ponderhit":
+                    if self.search_control[1]:
+                        var now = Float64(monotonic()) / 1_000_000_000.0
+                        self.search_control[1] = False
+                        self.search_control[2] = now + Float64(
+                            String(py=self.search_control[3])
+                        )
+                elif incoming == "quit":
+                    self.search_control[0] = True
+                    self.search_control[1] = False
+                    self.search_control[4] = True
+                elif incoming == "isready":
+                    print("readyok")
+        if String(py=self.search_control[0]) == "True":
+            raise Error("Search stopped")
+        if self.search_control[2] is not None:
+            var active_deadline = Float64(String(py=self.search_control[2]))
+            if Float64(monotonic()) / 1_000_000_000.0 >= active_deadline:
+                raise Error("Search deadline reached")
         if deadline:
             if Float64(monotonic()) / 1_000_000_000.0 >= deadline.value():
                 raise Error("Search deadline reached")
