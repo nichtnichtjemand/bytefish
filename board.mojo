@@ -1,5 +1,6 @@
 from std.collections import List, Optional
 from std.time import monotonic
+from std.python import Python, PythonObject
 
 from move import Move
 from piece import Piece
@@ -26,19 +27,22 @@ struct Board:
     var en_passant_square: String
     var halfmove_clock: Int
     var fullmove_number: Int
-    var history: List[String]
     var repetition_counts: List[String]
+    var last_search_score: Int
+    var last_search_nodes: Int
 
-    def __init__(out self) raises:
+    def __init__(out self, empty: Bool = False) raises:
         self.current_turn = True
         self.board = List[List[Piece]]()
         self.castling_rights = "KQkq"
         self.en_passant_square = "-"
         self.halfmove_clock = 0
         self.fullmove_number = 1
-        self.history = List[String]()
         self.repetition_counts = List[String]()
-        self.reset()
+        self.last_search_score = 0
+        self.last_search_nodes = 0
+        if not empty:
+            self.reset()
 
     def reset(mut self) raises:
         self.board = List[List[Piece]]()
@@ -68,12 +72,13 @@ struct Board:
         self.en_passant_square = "-"
         self.halfmove_clock = 0
         self.fullmove_number = 1
-        self.history = List[String]()
         self.repetition_counts = List[String]()
         self._record_position()
 
     def copy(self) raises -> Board:
-        var result = Board()
+        # Search creates a board copy at nearly every node. Skip constructing
+        # and then throwing away the initial position in that hot path.
+        var result = Board(True)
         result.board = List[List[Piece]]()
 
         for row in range(8):
@@ -84,15 +89,14 @@ struct Board:
         result.en_passant_square = self.en_passant_square
         result.halfmove_clock = self.halfmove_clock
         result.fullmove_number = self.fullmove_number
-        result.history = self.history.copy()
         result.repetition_counts = self.repetition_counts.copy()
+        result.last_search_score = self.last_search_score
+        result.last_search_nodes = self.last_search_nodes
 
         return result^
 
     def _set_square(mut self, row: Int, column: Int, piece: Piece):
-        var board_row = self.board[row].copy()
-        board_row[column] = piece
-        self.board[row] = board_row^
+        self.board[row][column] = piece
 
     def _inside(self, row: Int, column: Int) -> Bool:
         return row >= 0 and row < 8 and column >= 0 and column < 8
@@ -114,55 +118,87 @@ struct Board:
                     return Optional(KingPos(row, column))
         return None
 
+    def _ray_attacked(
+        self,
+        row: Int,
+        column: Int,
+        by_color: Bool,
+        row_step: Int,
+        column_step: Int,
+        diagonal: Bool,
+    ) -> Bool:
+        var scan_row = row + row_step
+        var scan_column = column + column_step
+        while self._inside(scan_row, scan_column):
+            var piece = self.board[scan_row][scan_column]
+            if piece.piece != "":
+                if piece.color == by_color:
+                    if piece.type == "q":
+                        return True
+                    if diagonal and piece.type == "b":
+                        return True
+                    if not diagonal and piece.type == "r":
+                        return True
+                return False
+            scan_row += row_step
+            scan_column += column_step
+        return False
+
     def is_square_attacked(self, row: Int, column: Int, by_color: Bool) -> Bool:
-        for source_row in range(8):
-            for source_column in range(8):
-                var piece = self.board[source_row][source_column]
+        # Test the limited-range pieces by looking outward from the target,
+        # then walk only the eight rays for sliders. This avoids scanning all
+        # 64 squares on every king-safety check in move generation.
+        var pawn_row = row + 1
+        if not by_color:
+            pawn_row = row - 1
+        if self._inside(pawn_row, column - 1):
+            var pawn = self.board[pawn_row][column - 1]
+            if pawn.piece != "" and pawn.color == by_color and pawn.type == "p":
+                return True
+        if self._inside(pawn_row, column + 1):
+            var pawn = self.board[pawn_row][column + 1]
+            if pawn.piece != "" and pawn.color == by_color and pawn.type == "p":
+                return True
 
-                if piece.piece == "" or piece.color != by_color:
+        for row_offset in range(-2, 3):
+            for column_offset in range(-2, 3):
+                if abs(row_offset) * abs(column_offset) != 2:
                     continue
-
-                var dr = row - source_row
-                var dc = column - source_column
-
-                if piece.type == "p":
-                    var direction = -1
-                    if not piece.color:
-                        direction = 1
-
-                    if dr == direction and (dc == -1 or dc == 1):
-                        return True
-
-                elif piece.type == "n":
-                    if ((dr == 2 or dr == -2) and (dc == 1 or dc == -1)) or (
-                        (dc == 2 or dc == -2) and (dr == 1 or dr == -1)
-                    ):
-                        return True
-
-                elif piece.type == "k":
+                var source_row = row + row_offset
+                var source_column = column + column_offset
+                if self._inside(source_row, source_column):
+                    var attacker = self.board[source_row][source_column]
                     if (
-                        dr >= -1
-                        and dr <= 1
-                        and dc >= -1
-                        and dc <= 1
-                        and (dr != 0 or dc != 0)
+                        attacker.piece != ""
+                        and attacker.color == by_color
+                        and attacker.type == "n"
                     ):
                         return True
 
-                elif piece.type == "r" or piece.type == "q":
-                    if dr == 0 or dc == 0:
-                        if self._path_clear(
-                            source_row, source_column, row, column
-                        ):
-                            return True
+        for row_offset in range(-1, 2):
+            for column_offset in range(-1, 2):
+                if row_offset == 0 and column_offset == 0:
+                    continue
+                var source_row = row + row_offset
+                var source_column = column + column_offset
+                if self._inside(source_row, source_column):
+                    var attacker = self.board[source_row][source_column]
+                    if (
+                        attacker.piece != ""
+                        and attacker.color == by_color
+                        and attacker.type == "k"
+                    ):
+                        return True
 
-                if piece.type == "b" or piece.type == "q":
-                    if dr != 0 and (dr == dc or dr == -dc):
-                        if self._path_clear(
-                            source_row, source_column, row, column
-                        ):
-                            return True
-
+        for row_step in range(-1, 2):
+            for column_step in range(-1, 2):
+                if row_step == 0 and column_step == 0:
+                    continue
+                var diagonal = row_step != 0 and column_step != 0
+                if self._ray_attacked(
+                    row, column, by_color, row_step, column_step, diagonal
+                ):
+                    return True
         return False
 
     def _path_clear(
@@ -330,6 +366,7 @@ struct Board:
         to_piece: Piece,
         is_capture: Bool,
     ) raises:
+        var previous_castling_rights = self.castling_rights
         self._update_castling_rights(move, from_piece, to_piece)
 
         self.en_passant_square = "-"
@@ -351,6 +388,15 @@ struct Board:
             self.fullmove_number += 1
 
         self.current_turn = not self.current_turn
+        # Positions before a pawn move, capture, or castling-right loss can
+        # never recur. Keeping only the reversible suffix makes repetition
+        # checks and board copies cheaper without changing draw detection.
+        if (
+            from_piece.type == "p"
+            or is_capture
+            or self.castling_rights != previous_castling_rights
+        ):
+            self.repetition_counts = List[String]()
         self._record_position()
 
     def move(mut self, move: Move) raises -> Bool:
@@ -435,6 +481,11 @@ struct Board:
 
     def get_legal_moves(self) raises -> List[Move]:
         var result = List[Move]()
+        var promotion_types = List[String]()
+        promotion_types.append("q")
+        promotion_types.append("r")
+        promotion_types.append("b")
+        promotion_types.append("n")
 
         for row in range(8):
             for column in range(8):
@@ -452,12 +503,6 @@ struct Board:
                     if piece.type == "p" and (
                         candidate.to_row == 0 or candidate.to_row == 7
                     ):
-                        var promotion_types = List[String]()
-                        promotion_types.append("q")
-                        promotion_types.append("r")
-                        promotion_types.append("b")
-                        promotion_types.append("n")
-
                         for promotion in promotion_types:
                             var promoted_move = Move(
                                 candidate.from_field,
@@ -562,15 +607,7 @@ struct Board:
                 if piece.piece == "":
                     continue
 
-                var value = 0
-                if piece.type == "p":
-                    value = 100
-                elif piece.type == "n" or piece.type == "b":
-                    value = 300
-                elif piece.type == "r":
-                    value = 500
-                elif piece.type == "q":
-                    value = 900
+                var value = tables.mg_value(piece.type)
 
                 if piece.color:
                     score -= value
@@ -581,7 +618,6 @@ struct Board:
 
     def get_position_score(self) -> Int:
         var score = 0
-        var endgame = self.is_endgame()
 
         for row in range(8):
             for column in range(8):
@@ -590,26 +626,11 @@ struct Board:
                     continue
 
                 var table_row = row
-                if not piece.color:
+                if piece.color:
                     table_row = 7 - row
-
-                var bonus = 0
-
-                if piece.type == "p":
-                    bonus = tables.pawn_bonus(table_row, column)
-                elif piece.type == "n":
-                    bonus = tables.knight_bonus(table_row, column)
-                elif piece.type == "b":
-                    bonus = tables.bishop_bonus(table_row, column)
-                elif piece.type == "r":
-                    bonus = tables.rook_bonus(table_row, column)
-                elif piece.type == "q":
-                    bonus = tables.queen_bonus(table_row, column)
-                elif piece.type == "k":
-                    if endgame:
-                        bonus = tables.king_endgame_bonus(table_row, column)
-                    else:
-                        bonus = tables.king_bonus(table_row, column)
+                var bonus = tables.mg_piece_square_bonus(
+                    piece.type, table_row, column
+                )
 
                 if piece.color:
                     score -= bonus
@@ -617,6 +638,55 @@ struct Board:
                     score += bonus
 
         return score
+
+    def _get_tapered_material_position_score(self) -> Int:
+        var white_mg = 0
+        var black_mg = 0
+        var white_eg = 0
+        var black_eg = 0
+        var game_phase = 0
+
+        for row in range(8):
+            for column in range(8):
+                var piece = self.board[row][column]
+                if piece.piece == "":
+                    continue
+
+                var table_row = row
+                if piece.color:
+                    table_row = 7 - row
+
+                var mg_score = (
+                    tables.mg_value(piece.type)
+                    + tables.mg_piece_square_bonus(
+                        piece.type, table_row, column
+                    )
+                )
+                var eg_score = (
+                    tables.eg_value(piece.type)
+                    + tables.eg_piece_square_bonus(
+                        piece.type, table_row, column
+                    )
+                )
+
+                if piece.color:
+                    white_mg += mg_score
+                    white_eg += eg_score
+                else:
+                    black_mg += mg_score
+                    black_eg += eg_score
+                game_phase += tables.gamephase_increment(piece.type)
+
+        var mg_phase = min(game_phase, 24)
+        var eg_phase = 24 - mg_phase
+        # Preserve the engine's current convention: positive scores favor
+        # Black, negative scores favor White.
+        var mg_total = black_mg - white_mg
+        var eg_total = black_eg - white_eg
+        var blended = mg_total * mg_phase + eg_total * eg_phase
+        if blended < 0:
+            return -((-blended) // 24)
+        return blended // 24
 
     def _piece_count(self) -> Int:
         var count = 0
@@ -628,12 +698,15 @@ struct Board:
 
     def is_endgame(self) -> Bool:
         var queens = 0
+        var pieces = 0
         for row in range(8):
             for column in range(8):
                 var piece = self.board[row][column]
-                if piece.piece != "" and piece.type == "q":
-                    queens += 1
-        return queens == 0 or self._piece_count() <= 12
+                if piece.piece != "":
+                    pieces += 1
+                    if piece.type == "q":
+                        queens += 1
+        return queens == 0 or pieces <= 12
 
     def is_insufficient_material(self) -> Bool:
         var white_bishops = 0
@@ -709,7 +782,10 @@ struct Board:
         return True
 
     def get_endgame_score(self) -> Int:
-        if not self.is_endgame():
+        return self._get_endgame_score(self.is_endgame())
+
+    def _get_endgame_score(self, endgame: Bool) -> Int:
+        if not endgame:
             return 0
 
         var score = 0
@@ -812,20 +888,24 @@ struct Board:
 
     def get_pawn_structure_score(self) -> Int:
         var score = 0
+        var white_pawns_by_file = List[Int]()
+        var black_pawns_by_file = List[Int]()
+        for _ in range(8):
+            white_pawns_by_file.append(0)
+            black_pawns_by_file.append(0)
+
+        for row in range(8):
+            for column in range(8):
+                var piece = self.board[row][column]
+                if piece.piece != "" and piece.type == "p":
+                    if piece.color:
+                        white_pawns_by_file[column] += 1
+                    else:
+                        black_pawns_by_file[column] += 1
 
         for column in range(8):
-            var white_pawns = 0
-            var black_pawns = 0
-
-            for row in range(8):
-                var piece = self.board[row][column]
-                if piece.piece == "" or piece.type != "p":
-                    continue
-
-                if piece.color:
-                    white_pawns += 1
-                else:
-                    black_pawns += 1
+            var white_pawns = white_pawns_by_file[column]
+            var black_pawns = black_pawns_by_file[column]
 
             if white_pawns > 1:
                 score += (white_pawns - 1) * 12
@@ -833,44 +913,18 @@ struct Board:
                 score -= (black_pawns - 1) * 12
 
             if white_pawns > 0:
-                var isolated = True
-                if column > 0:
-                    for row in range(8):
-                        if (
-                            self.board[row][column - 1].piece != ""
-                            and self.board[row][column - 1].type == "p"
-                            and self.board[row][column - 1].color
-                        ):
-                            isolated = False
-                if column < 7:
-                    for row in range(8):
-                        if (
-                            self.board[row][column + 1].piece != ""
-                            and self.board[row][column + 1].type == "p"
-                            and self.board[row][column + 1].color
-                        ):
-                            isolated = False
+                var isolated = (
+                    (column == 0 or white_pawns_by_file[column - 1] == 0)
+                    and (column == 7 or white_pawns_by_file[column + 1] == 0)
+                )
                 if isolated:
                     score += white_pawns * 14
 
             if black_pawns > 0:
-                var isolated = True
-                if column > 0:
-                    for row in range(8):
-                        if (
-                            self.board[row][column - 1].piece != ""
-                            and self.board[row][column - 1].type == "p"
-                            and not self.board[row][column - 1].color
-                        ):
-                            isolated = False
-                if column < 7:
-                    for row in range(8):
-                        if (
-                            self.board[row][column + 1].piece != ""
-                            and self.board[row][column + 1].type == "p"
-                            and not self.board[row][column + 1].color
-                        ):
-                            isolated = False
+                var isolated = (
+                    (column == 0 or black_pawns_by_file[column - 1] == 0)
+                    and (column == 7 or black_pawns_by_file[column + 1] == 0)
+                )
                 if isolated:
                     score -= black_pawns * 14
 
@@ -912,11 +966,20 @@ struct Board:
 
     def get_king_safety_score(self) -> Int:
         var has_queen = False
+        var white_king: Optional[KingPos] = None
+        var black_king: Optional[KingPos] = None
         for row in range(8):
             for column in range(8):
                 var piece = self.board[row][column]
-                if piece.piece != "" and piece.type == "q":
+                if piece.piece == "":
+                    continue
+                if piece.type == "q":
                     has_queen = True
+                elif piece.type == "k":
+                    if piece.color:
+                        white_king = Optional(KingPos(row, column))
+                    else:
+                        black_king = Optional(KingPos(row, column))
         if not has_queen:
             return 0
 
@@ -924,7 +987,9 @@ struct Board:
 
         for color_index in range(2):
             var color = color_index == 1
-            var king = self._find_king(color)
+            var king = white_king
+            if not color:
+                king = black_king
             if not king:
                 continue
 
@@ -954,8 +1019,7 @@ struct Board:
 
     def evaluate(self) raises -> Int:
         return (
-            self.get_material_score()
-            + self.get_position_score()
+            self._get_tapered_material_position_score()
             + self.get_endgame_score()
             + self.get_hanging_piece_score()
             + self.get_pawn_structure_score()
@@ -964,20 +1028,33 @@ struct Board:
         )
 
     def _position_key(self) -> String:
-        var fields = self.to_fen().split(" ")
-        return (
-            String(fields[0])
-            + " "
-            + String(fields[1])
-            + " "
-            + String(fields[2])
-            + " "
-            + String(fields[3])
-        )
+        var result = String("")
+        for row in range(8):
+            var empty_count = 0
+            for column in range(8):
+                var piece = self.board[row][column]
+                if piece.piece == "":
+                    empty_count += 1
+                else:
+                    if empty_count > 0:
+                        result += String(empty_count)
+                        empty_count = 0
+                    result += piece.piece
+            if empty_count > 0:
+                result += String(empty_count)
+            if row < 7:
+                result += "/"
+
+        result += " "
+        if self.current_turn:
+            result += "w"
+        else:
+            result += "b"
+        result += " " + self.castling_rights + " " + self.en_passant_square
+        return result
 
     def _record_position(mut self) raises:
         var key = self._position_key()
-        self.history.append(key)
         self.repetition_counts.append(key)
 
     def is_threefold_repetition(self) -> Bool:
@@ -987,12 +1064,17 @@ struct Board:
         for key in self.repetition_counts:
             if key == current:
                 count += 1
+                if count == 3:
+                    return True
 
-        return count >= 3
+        return False
 
     def is_checkmate(self, color: Bool) raises -> Bool:
         if not self.is_in_check(color):
             return False
+
+        if color == self.current_turn:
+            return len(self.get_legal_moves()) == 0
 
         var child = self.copy()
         child.current_turn = color
@@ -1003,79 +1085,103 @@ struct Board:
             return False
         return len(self.get_legal_moves()) == 0
 
-    def find_mate_in_one(self) raises -> Optional[Move]:
+    def find_mate_in_one(mut self) raises -> Optional[Move]:
         var moves = self.get_legal_moves()
+        var tested_moves = 0
 
         for move in moves:
             var child = self.copy()
             if child._apply_unchecked(move):
+                tested_moves += 1
                 if child.is_checkmate(child.current_turn):
+                    self.last_search_nodes += tested_moves
                     return Optional(move)
 
+        self.last_search_nodes += tested_moves
         return None
 
     def order_moves(self, moves: List[Move]) raises -> List[Move]:
         var ordered = List[Move]()
         var remaining = moves.copy()
+        var scores = List[Int]()
+        var endgame = self.is_endgame()
+
+        # Compute each move's expensive positional score once. The previous
+        # selection loop recalculated endgame and passed-pawn features every
+        # time it compared a move with the remaining list.
+        for move in remaining:
+            var score = 0
+            var target = self.board[move.to_row][move.to_column]
+            var moving_piece = self.board[move.from_row][move.from_column]
+
+            if target.piece != "":
+                var victim_value = 0
+                var attacker_value = 0
+                if target.type == "p":
+                    victim_value = 1
+                elif target.type == "n" or target.type == "b":
+                    victim_value = 3
+                elif target.type == "r":
+                    victim_value = 5
+                elif target.type == "q":
+                    victim_value = 9
+
+                if moving_piece.type == "p":
+                    attacker_value = 1
+                elif moving_piece.type == "n" or moving_piece.type == "b":
+                    attacker_value = 3
+                elif moving_piece.type == "r":
+                    attacker_value = 5
+                elif moving_piece.type == "q":
+                    attacker_value = 9
+                score += 1000 + victim_value * 10 - attacker_value
+
+            if move.promotion:
+                var promotion = move.promotion.value().lower()
+                if promotion == "q":
+                    score += 900
+                elif promotion == "r":
+                    score += 500
+                elif promotion == "b" or promotion == "n":
+                    score += 300
+
+            if self.is_en_passant(move):
+                score += 1000 + 10 - 1
+
+            if endgame:
+                if moving_piece.type == "p":
+                    if move.to_row == 0 or move.to_row == 7:
+                        score += 900
+                    elif self._is_passed_pawn(
+                        move.from_row,
+                        move.from_column,
+                        moving_piece.color,
+                    ):
+                        score += 120
+                elif moving_piece.type == "k":
+                    var old_distance = abs(
+                        Float64(move.from_row) - 3.5
+                    ) + abs(Float64(move.from_column) - 3.5)
+                    var new_distance = abs(
+                        Float64(move.to_row) - 3.5
+                    ) + abs(Float64(move.to_column) - 3.5)
+                    if new_distance < old_distance:
+                        score += 45
+            scores.append(score)
 
         while len(remaining) > 0:
             var best_index = 0
             var best_score = -INF
 
             for index in range(len(remaining)):
-                var move = remaining[index]
-                var score = 0
-                var target = self.board[move.to_row][move.to_column]
-                var moving_piece = self.board[move.from_row][move.from_column]
-
-                if target.piece != "":
-                    var victim_value = 0
-                    var attacker_value = 0
-                    if target.type == "p":
-                        victim_value = 1
-                    elif target.type == "n" or target.type == "b":
-                        victim_value = 3
-                    elif target.type == "r":
-                        victim_value = 5
-                    elif target.type == "q":
-                        victim_value = 9
-
-                    if moving_piece.type == "p":
-                        attacker_value = 1
-                    elif moving_piece.type == "n" or moving_piece.type == "b":
-                        attacker_value = 3
-                    elif moving_piece.type == "r":
-                        attacker_value = 5
-                    elif moving_piece.type == "q":
-                        attacker_value = 9
-                    score += 1000 + victim_value * 10 - attacker_value
-
-                if self.is_endgame():
-                    if moving_piece.type == "p":
-                        if move.to_row == 0 or move.to_row == 7:
-                            score += 900
-                        elif self._is_passed_pawn(
-                            move.from_row,
-                            move.from_column,
-                            moving_piece.color,
-                        ):
-                            score += 120
-                    elif moving_piece.type == "k":
-                        var old_distance = abs(
-                            Float64(move.from_row) - 3.5
-                        ) + abs(Float64(move.from_column) - 3.5)
-                        var new_distance = abs(
-                            Float64(move.to_row) - 3.5
-                        ) + abs(Float64(move.to_column) - 3.5)
-                        if new_distance < old_distance:
-                            score += 45
-
+                var score = scores[index]
                 if score > best_score:
                     best_score = score
                     best_index = index
 
             ordered.append(remaining[best_index])
             _ = remaining.pop(best_index)
+            _ = scores.pop(best_index)
 
         return ordered^
 
@@ -1087,6 +1193,7 @@ struct Board:
         remaining_depth: Int = 2,
     ) raises -> Int:
         Self._check_deadline(deadline)
+        self.last_search_nodes = 1
 
         var drawn = (
             self.is_threefold_repetition()
@@ -1155,12 +1262,14 @@ struct Board:
             Self._check_deadline(deadline)
 
             var child = self.copy()
+            child.last_search_nodes = 0
             if not child._apply_unchecked(move):
                 continue
 
             var score = child.quiescence(
                 local_alpha, local_beta, deadline, remaining_depth - 1
             )
+            self.last_search_nodes += child.last_search_nodes
 
             if self.current_turn:
                 if score < best_score:
@@ -1188,6 +1297,14 @@ struct Board:
     ) raises -> Int:
         Self._check_deadline(deadline)
 
+        # Quiescence already checks repetition, move-count draws and
+        # insufficient material, so send horizon nodes there before doing
+        # those same tests twice.
+        if depth <= 0:
+            return self.quiescence(alpha, beta, deadline)
+
+        self.last_search_nodes = 1
+
         var drawn = (
             self.is_threefold_repetition()
             or self.halfmove_clock >= 100
@@ -1200,9 +1317,6 @@ struct Board:
                         return MATE_SCORE + depth
                     return -MATE_SCORE - depth
             return 0
-
-        if depth <= 0:
-            return self.quiescence(alpha, beta, deadline)
 
         var moves = self.get_legal_moves()
 
@@ -1224,6 +1338,7 @@ struct Board:
             for move in ordered:
                 Self._check_deadline(deadline)
                 var child = self.copy()
+                child.last_search_nodes = 0
 
                 if not child._apply_unchecked(move):
                     continue
@@ -1231,6 +1346,7 @@ struct Board:
                 var score = child.minimax(
                     depth - 1, local_alpha, local_beta, deadline
                 )
+                self.last_search_nodes += child.last_search_nodes
 
                 if score < best_score:
                     best_score = score
@@ -1246,6 +1362,7 @@ struct Board:
             for move in ordered:
                 Self._check_deadline(deadline)
                 var child = self.copy()
+                child.last_search_nodes = 0
 
                 if not child._apply_unchecked(move):
                     continue
@@ -1253,6 +1370,7 @@ struct Board:
                 var score = child.minimax(
                     depth - 1, local_alpha, local_beta, deadline
                 )
+                self.last_search_nodes += child.last_search_nodes
 
                 if score > best_score:
                     best_score = score
@@ -1269,19 +1387,62 @@ struct Board:
         mut self,
         depth: Int,
         deadline: Optional[Float64] = None,
+        root_moves: Optional[List[Move]] = None,
+        preferred_move: Optional[Move] = None,
     ) raises -> Optional[Move]:
+        self.last_search_nodes = 0
         Self._check_deadline(deadline)
-
-        if not deadline:
-            var mate = self.find_mate_in_one()
-            if mate:
-                return mate
-
+        self.last_search_nodes = 1
         var moves = self.get_legal_moves()
+        if root_moves:
+            var allowed = root_moves.value().copy()
+            var filtered = List[Move]()
+            for move in moves:
+                for allowed_move in allowed:
+                    if (
+                        move.from_field == allowed_move.from_field
+                        and move.to_field == allowed_move.to_field
+                        and move.promotion == allowed_move.promotion
+                    ):
+                        filtered.append(move)
+                        break
+            moves = filtered^
+
         if len(moves) == 0:
             return None
 
+        if not deadline and not root_moves:
+            var mate = self.find_mate_in_one()
+            if mate:
+                if self.current_turn:
+                    self.last_search_score = -MATE_SCORE
+                else:
+                    self.last_search_score = MATE_SCORE
+                return mate
+
         var ordered = self.order_moves(moves)
+        if preferred_move:
+            var preferred = preferred_move.value()
+            var preferred_first = List[Move]()
+            var found_preferred = False
+            for move in ordered:
+                if (
+                    move.from_field == preferred.from_field
+                    and move.to_field == preferred.to_field
+                    and move.promotion == preferred.promotion
+                ):
+                    preferred_first.append(move)
+                    found_preferred = True
+                    break
+            if found_preferred:
+                for move in ordered:
+                    if not (
+                        move.from_field == preferred.from_field
+                        and move.to_field == preferred.to_field
+                        and move.promotion == preferred.promotion
+                    ):
+                        preferred_first.append(move)
+                ordered = preferred_first^
         var best = ordered[0]
         var best_score = INF
         var local_alpha = -INF
@@ -1294,12 +1455,14 @@ struct Board:
             Self._check_deadline(deadline)
 
             var child = self.copy()
+            child.last_search_nodes = 0
             if not child._apply_unchecked(move):
                 continue
 
             var score = child.minimax(
                 depth - 1, local_alpha, local_beta, deadline
             )
+            self.last_search_nodes += child.last_search_nodes
 
             if self.current_turn:
                 if score < best_score:
@@ -1307,14 +1470,157 @@ struct Board:
                     best = move
                 if best_score < local_beta:
                     local_beta = best_score
+                if local_beta <= local_alpha:
+                    break
             else:
                 if score > best_score:
                     best_score = score
                     best = move
                 if best_score > local_alpha:
                     local_alpha = best_score
+                if local_beta <= local_alpha:
+                    break
 
+        self.last_search_score = best_score
         return Optional(best)
+
+    def best_move_two_workers(
+        mut self,
+        depth: Int,
+        deadline: Optional[Float64] = None,
+        root_moves: Optional[List[Move]] = None,
+        preferred_move: Optional[Move] = None,
+    ) raises -> Optional[Move]:
+        self.last_search_nodes = 0
+        var moves = self.get_legal_moves()
+        if root_moves:
+            var allowed = root_moves.value().copy()
+            var filtered = List[Move]()
+            for move in moves:
+                for allowed_move in allowed:
+                    if (
+                        move.from_field == allowed_move.from_field
+                        and move.to_field == allowed_move.to_field
+                        and move.promotion == allowed_move.promotion
+                    ):
+                        filtered.append(move)
+                        break
+            moves = filtered^
+
+        if len(moves) < 2:
+            return self.best_move(
+                depth, deadline, Optional(moves.copy()), preferred_move
+            )
+
+        var ordered = self.order_moves(moves)
+        var parent_moves = List[Move]()
+        var child_moves = List[Move]()
+        for index in range(len(ordered)):
+            if index % 2 == 0:
+                parent_moves.append(ordered[index])
+            else:
+                child_moves.append(ordered[index])
+
+        var os = Python.import_module("os")
+        if String(os.name) != "posix":
+            return self.best_move(
+                depth, deadline, Optional(moves.copy()), preferred_move
+            )
+
+        var pipe = os.pipe()
+        var read_fd = Int(py=pipe[0])
+        var write_fd = Int(py=pipe[1])
+        var child_pid: Int
+        try:
+            child_pid = Int(py=os.fork())
+        except e:
+            os.close(read_fd)
+            os.close(write_fd)
+            return self.best_move(
+                depth, deadline, Optional(moves.copy()), preferred_move
+            )
+
+        if child_pid == 0:
+            os.close(read_fd)
+            var payload = String("ERR 0")
+            try:
+                var child_result = self.best_move(
+                    depth, deadline, Optional(child_moves.copy()), preferred_move
+                )
+                if child_result:
+                    var selected = child_result.value()
+                    var promotion = String("-")
+                    if selected.promotion:
+                        promotion = selected.promotion.value()
+                    payload = (
+                        selected.from_field + " " + selected.to_field + " "
+                        + promotion + " " + String(self.last_search_score)
+                        + " " + String(self.last_search_nodes)
+                    )
+            except e:
+                payload = "ERR " + String(self.last_search_nodes)
+
+            var encoded = PythonObject(payload).encode()
+            _ = os.write(write_fd, encoded)
+            os.close(write_fd)
+            os._exit(0)
+            return None
+
+        os.close(write_fd)
+        var parent_result: Optional[Move] = None
+        var parent_failed = False
+        try:
+            parent_result = self.best_move(
+                depth, deadline, Optional(parent_moves.copy()), preferred_move
+            )
+        except e:
+            parent_failed = True
+
+        var response = os.read(read_fd, 128)
+        os.close(read_fd)
+        _ = os.waitpid(child_pid, 0)
+
+        var response_text = String(py=response.decode())
+        var response_parts = response_text.split(" ")
+        if len(response_parts) == 2 and String(response_parts[0]) == "ERR":
+            self.last_search_nodes += Int(String(response_parts[1]))
+            raise Error("Search deadline reached")
+        if len(response_parts) != 5:
+            if parent_failed:
+                raise Error("Search deadline reached")
+            if parent_result:
+                return parent_result
+            return None
+
+        var child_nodes = Int(String(response_parts[4]))
+        self.last_search_nodes += child_nodes
+        if parent_failed:
+            raise Error("Search deadline reached")
+
+        var child_move: Move
+        var child_promotion = String(response_parts[2])
+        if child_promotion == "-":
+            child_move = Move(
+                String(response_parts[0]), String(response_parts[1])
+            )
+        else:
+            child_move = Move(
+                String(response_parts[0]),
+                String(response_parts[1]),
+                Optional(child_promotion),
+            )
+        var child_score = Int(String(response_parts[3]))
+        if not parent_result:
+            self.last_search_score = child_score
+            return Optional(child_move)
+
+        if (
+            (self.current_turn and child_score < self.last_search_score)
+            or (not self.current_turn and child_score > self.last_search_score)
+        ):
+            self.last_search_score = child_score
+            return Optional(child_move)
+        return parent_result
 
     @staticmethod
     def _check_deadline(deadline: Optional[Float64]) raises:
@@ -1375,7 +1681,6 @@ struct Board:
         self.en_passant_square = String(parts[3])
         self.halfmove_clock = Int(String(parts[4]))
         self.fullmove_number = Int(String(parts[5]))
-        self.history = List[String]()
         self.repetition_counts = List[String]()
         self._record_position()
 

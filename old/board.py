@@ -6,6 +6,42 @@ import piece_square_tables as tables
 from syzygy import SyzygyTablebase
 
 
+# The UCI process uses a fork-based pool on Linux. Each worker inherits its own
+# snapshot of this board and searches independent root moves in that snapshot.
+_PARALLEL_SEARCH_BOARD = None
+
+
+def _search_root_move(task):
+    move, depth, deadline = task
+    board = _PARALLEL_SEARCH_BOARD
+    if board is None:
+        raise RuntimeError("Parallel search worker was not initialized")
+
+    board._check_deadline(deadline)
+    child = board.copy()
+    if not child.move(move):
+        return move, 0
+    return move, child.minimax(
+        depth - 1, float("-inf"), float("inf"), deadline
+    )
+
+
+def create_search_executor(board, workers=2):
+    """Create a two-process root-search pool on platforms that support fork."""
+    global _PARALLEL_SEARCH_BOARD
+    import multiprocessing
+    from concurrent.futures import ProcessPoolExecutor
+
+    if "fork" not in multiprocessing.get_all_start_methods():
+        return None
+
+    _PARALLEL_SEARCH_BOARD = board
+    return ProcessPoolExecutor(
+        max_workers=workers,
+        mp_context=multiprocessing.get_context("fork"),
+    )
+
+
 class SearchTimeout(Exception):
     """Raised when the UCI search budget has expired."""
 
@@ -26,6 +62,7 @@ class Board:
         self.current_turn = True # True = White, False = Black
         self.history = {}
         self.transposition_table = {}
+        self.transposition_table_limit = 4096
         self.repetition_counts = {}
         self.board = []
         for row in setup:
@@ -370,13 +407,17 @@ class Board:
 
         new_board.history = self.history.copy()
         new_board.transposition_table = self.transposition_table
+        new_board.transposition_table_limit = self.transposition_table_limit
         new_board.repetition_counts = self.repetition_counts.copy()
         new_board.tablebase = self.tablebase
 
         return new_board
 
-    def find_mate_in_one(self):
-        for move in self.get_legal_moves():
+    def find_mate_in_one(self, moves=None, deadline=None):
+        if moves is None:
+            moves = self.get_legal_moves()
+        for move in moves:
+            self._check_deadline(deadline)
             test_board = self.copy()
 
             if not test_board.move(move):
@@ -697,8 +738,16 @@ class Board:
         return score + board.get_endgame_score()
     
 
-    def best_move(self, depth, deadline=None):
-        moves = self.order_moves(self.get_legal_moves())
+    def best_move(
+        self, depth, deadline=None, executor=None, root_moves=None
+    ):
+        legal_moves = self.get_legal_moves()
+        if root_moves is not None:
+            allowed = {self._move_key(move) for move in root_moves}
+            legal_moves = [
+                move for move in legal_moves if self._move_key(move) in allowed
+            ]
+        moves = self.order_moves(legal_moves)
 
         if not moves:
             return None
@@ -715,7 +764,7 @@ class Board:
         if tablebase_transition is not None:
             return tablebase_transition
 
-        mate_move = self.find_mate_in_one()
+        mate_move = self.find_mate_in_one(moves, deadline)
 
         if mate_move is not None:
             return mate_move
@@ -729,25 +778,40 @@ class Board:
         else:
             best_score = float("-inf") 
 
-        for move in moves:
-            self._check_deadline(deadline)
-            child = self.copy()
-            child.move(move)
-
-            score = child.minimax(depth - 1, alpha, beta, deadline)
-
-            if self.current_turn:
-                if score < best_score:
+        if executor is not None:
+            scored_moves = executor.map(
+                _search_root_move,
+                ((move, depth, deadline) for move in moves),
+            )
+            for move, score in scored_moves:
+                self._check_deadline(deadline)
+                if self.current_turn:
+                    if score < best_score:
+                        best_score = score
+                        best_move = move
+                elif score > best_score:
                     best_score = score
                     best_move = move
+        else:
+            for move in moves:
+                self._check_deadline(deadline)
+                child = self.copy()
+                child.move(move)
 
-                beta = min(beta, best_score)
-            else:
-                if score > best_score:
-                    best_score = score
-                    best_move = move
+                score = child.minimax(depth - 1, alpha, beta, deadline)
 
-                alpha = max(alpha, best_score)
+                if self.current_turn:
+                    if score < best_score:
+                        best_score = score
+                        best_move = move
+
+                    beta = min(beta, best_score)
+                else:
+                    if score > best_score:
+                        best_score = score
+                        best_move = move
+
+                    alpha = max(alpha, best_score)
 
         return best_move
 
@@ -933,46 +997,49 @@ class Board:
 
         if not cutoff:
             self.transposition_table[transposition_key] = best_score
+            while len(self.transposition_table) > self.transposition_table_limit:
+                self.transposition_table.pop(next(iter(self.transposition_table)))
         return best_score
 
     def quiescence(self, alpha, beta, deadline=None, remaining_depth=2):
         """Resolve forcing captures before accepting a leaf evaluation."""
         self._check_deadline(deadline)
-        if self.is_threefold_repetition() or self.halfmove_clock >= 100:
-            return 0
         legal_moves = self.get_legal_moves()
         in_check = self.is_in_check(self.current_turn)
+
+        if not legal_moves:
+            if in_check:
+                return 100000 if self.current_turn else -100000
+            return 0
+
+        if self.is_threefold_repetition() or self.halfmove_clock >= 100:
+            return 0
 
         if not in_check:
             stand_pat = self.evaluate(self)
             if self.current_turn:
                 beta = min(beta, stand_pat)
-                if beta <= alpha or remaining_depth == 0:
+                if beta <= alpha or remaining_depth <= 0:
                     return stand_pat
             else:
                 alpha = max(alpha, stand_pat)
-                if beta <= alpha or remaining_depth == 0:
+                if beta <= alpha or remaining_depth <= 0:
                     return stand_pat
-        elif remaining_depth == 0:
-            return self.evaluate(self)
 
-        tactical_moves = [
-            move for move in legal_moves
-            if (
-                (
-                    self.board[move.to_row][move.to_column] != ""
-                    and self.board[move.to_row][move.to_column].type != "k"
-                )
-                or move.promotion is not None
-                or self.is_en_passant(move)
-            )
-        ]
         if in_check:
+            # A checked side has no stand-pat option: every legal evasion,
+            # including king moves, must be searched even at the qsearch limit.
+            tactical_moves = legal_moves
+        else:
             tactical_moves = [
                 move for move in legal_moves
                 if (
-                    self.board[move.to_row][move.to_column] == ""
-                    or self.board[move.to_row][move.to_column].type != "k"
+                    (
+                        self.board[move.to_row][move.to_column] != ""
+                        and self.board[move.to_row][move.to_column].type != "k"
+                    )
+                    or move.promotion is not None
+                    or self.is_en_passant(move)
                 )
             ]
 
@@ -1026,11 +1093,19 @@ class Board:
 
             from_piece = self.board[move.from_row][move.from_column]
             to_piece = self.board[move.to_row][move.to_column]
-            
+            piece_values = {"p": 1, "n": 3, "b": 3, "r": 5, "q": 9, "k": 0}
             score = 0
             if to_piece != "":
-                piece_values = {"p": 1, "n": 3, "b": 3, "r": 5, "q": 9, "k": 0}
                 score += 1000 + (piece_values[to_piece.piece.lower()] * 10 - piece_values[from_piece.piece.lower()])
+
+            if move.promotion is not None:
+                promoted_value = {"q": 9, "r": 5, "b": 3, "n": 3}.get(
+                    move.promotion.lower(), 0
+                )
+                score += 800 + promoted_value * 10
+
+            if self.is_en_passant(move):
+                score += 1000 + 10 - piece_values["p"]
 
             if self.is_endgame():
                 score += self._endgame_move_bonus(move)
@@ -1040,6 +1115,16 @@ class Board:
             return score
 
         return sorted(moves, key=move_value, reverse=True)
+
+    @staticmethod
+    def _move_key(move):
+        return (
+            move.from_row,
+            move.from_column,
+            move.to_row,
+            move.to_column,
+            move.promotion,
+        )
 
 
 

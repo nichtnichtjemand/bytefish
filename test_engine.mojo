@@ -3,6 +3,7 @@ from std.time import monotonic
 
 from board import Board
 from move import Move
+import piece_square_tables as tables
 from uci import (
     calculate_search_budget,
     handle_position,
@@ -26,10 +27,36 @@ def perft(board: Board, depth: Int) raises -> Int:
 def main() raises:
     var board = Board()
 
+    assert tables.mg_value("p") == 82
+    assert tables.eg_value("q") == 936
+    assert tables.gamephase_increment("r") == 2
+    assert tables.mg_piece_square_bonus("p", 1, 0) == 98
+    assert tables.eg_piece_square_bonus("p", 1, 0) == 178
+
+    var tapered_eval_board = Board()
+    tapered_eval_board.load_fen("4k3/8/8/8/8/8/P7/4K3 w - - 0 1")
+    assert tapered_eval_board._get_tapered_material_position_score() == -272
+
     assert len(board.get_legal_moves()) == 20, "start position must have 20 legal moves"
     assert perft(board, 2) == 400, "start position perft(2) must be 400"
     assert perft(board, 3) == 8902, "start position perft(3) must be 8902"
     assert board.evaluate() == 0, "start position evaluation must be balanced"
+
+    var pawn_attack = Board()
+    pawn_attack.load_fen("4k3/8/8/3p4/4K3/8/8/8 w - - 0 1")
+    assert pawn_attack.is_square_attacked(4, 4, False), "pawn diagonal attack must be detected"
+
+    var knight_attack = Board()
+    knight_attack.load_fen("4k3/8/8/8/4K3/5n2/8/8 w - - 0 1")
+    assert knight_attack.is_square_attacked(3, 4, False), "knight jump attack must be detected"
+
+    var blocked_rook_ray = Board()
+    blocked_rook_ray.load_fen("4r1k1/8/8/8/4P3/8/8/4K3 w - - 0 1")
+    assert not blocked_rook_ray.is_square_attacked(7, 4, False), "a piece must block rook attacks"
+
+    var clear_bishop_ray = Board()
+    clear_bishop_ray.load_fen("7k/8/8/5b2/8/3K4/8/8 w - - 0 1")
+    assert clear_bishop_ray.is_square_attacked(5, 3, False), "diagonal bishop ray must be detected"
 
     var e4 = Move("e2", "e4")
     assert board.move(e4), "e2e4 should be legal"
@@ -166,6 +193,7 @@ def main() raises:
     var search_board = Board()
     var searched = search_board.best_move(1)
     assert searched and uci_move_to_string(searched.value()) == "b1c3", "depth-1 search should match Python"
+    assert search_board.last_search_nodes > 1, "search must count visited nodes"
 
     var budget = calculate_search_budget(None, movetime_ms=Optional(1000))
     assert budget and budget.value() == 0.8
@@ -197,6 +225,23 @@ def main() raises:
         timed_move_found = True
     assert timed_move_found, "search with a future deadline should complete"
 
+    var worker_board = Board()
+    var worker_move = worker_board.best_move_two_workers(1)
+    var has_worker_move = False
+    if worker_move:
+        has_worker_move = True
+    assert has_worker_move, "two-worker search should return a legal root move"
+    var worker_result_is_legal = False
+    for legal_move in worker_board.get_legal_moves():
+        if (
+            legal_move.from_field == worker_move.value().from_field
+            and legal_move.to_field == worker_move.value().to_field
+            and legal_move.promotion == worker_move.value().promotion
+        ):
+            worker_result_is_legal = True
+    assert worker_result_is_legal, "worker result must be legal"
+    assert worker_board.last_search_nodes > 1, "worker search must return combined node counts"
+
     var timed_out = False
     try:
         _ = timed_board.best_move(
@@ -205,5 +250,14 @@ def main() raises:
     except e:
         timed_out = True
     assert timed_out, "an expired search deadline should propagate as a timeout"
+
+    var worker_timed_out = False
+    try:
+        _ = worker_board.best_move_two_workers(
+            2, Optional(Float64(monotonic()) / 1_000_000_000.0 - 1.0)
+        )
+    except e:
+        worker_timed_out = True
+    assert worker_timed_out, "two-worker search must propagate expired deadlines"
 
     print("Mojo engine smoke tests passed")

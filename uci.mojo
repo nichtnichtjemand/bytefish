@@ -141,6 +141,27 @@ def _parse_clock_value(
     return Optional(value)
 
 
+def perft(board: Board, depth: Int) raises -> Int:
+    if depth <= 0:
+        return 1
+    var nodes = 0
+    for move in board.get_legal_moves():
+        var child = board.copy()
+        if child._apply_unchecked(move):
+            nodes += perft(child, depth - 1)
+    return nodes
+
+
+def print_search_totals(nodes: Int, search_started_at: Float64):
+    var elapsed_ms = Int(
+        (Float64(monotonic()) / 1_000_000_000.0 - search_started_at) * 1000.0
+    )
+    var nps = Int(
+        Float64(nodes) * 1000.0 / Float64(max(elapsed_ms, 1))
+    )
+    print("info nodes", nodes, "nps", nps)
+
+
 def handle_position(mut board: Board, command: String) raises:
     var parts = _split_command(command)
     if len(parts) < 2:
@@ -186,10 +207,15 @@ def handle_position(mut board: Board, command: String) raises:
             return
 
 
-def handle_go(mut board: Board, command: String) raises:
+def handle_go(
+    mut board: Board,
+    command: String,
+    move_overhead_ms: Int = 30,
+    workers: Int = 2,
+) raises:
     var search_started_at = Float64(monotonic()) / 1_000_000_000.0
     var parts = _split_command(command)
-    var depth = 4
+    var depth = 5
     var depth_index = _find_token(parts, "depth")
     var has_depth_limit = depth_index >= 0
 
@@ -237,6 +263,47 @@ def handle_go(mut board: Board, command: String) raises:
         print("bestmove 0000")
         return
 
+    var searchmoves_index = _find_token(parts, "searchmoves")
+    var root_moves: Optional[List[Move]] = None
+    if searchmoves_index >= 0:
+        var allowed = List[Move]()
+        var index = searchmoves_index + 1
+        while index < len(parts):
+            var token = String(parts[index])
+            if (
+                token == "wtime" or token == "btime" or token == "winc"
+                or token == "binc" or token == "movestogo"
+                or token == "movetime" or token == "depth"
+            ):
+                break
+
+            var requested: Move
+            try:
+                requested = parse_uci_move(token, board)
+            except e:
+                print("info string Invalid searchmove", token)
+                return
+            var matched = False
+            for legal_move in moves:
+                if (
+                    requested.from_field == legal_move.from_field
+                    and requested.to_field == legal_move.to_field
+                    and requested.promotion == legal_move.promotion
+                ):
+                    allowed.append(legal_move)
+                    matched = True
+                    break
+            if not matched:
+                print("info string Illegal searchmove", token)
+                return
+            index += 1
+
+        if len(allowed) == 0:
+            print("info string searchmoves requires at least one move")
+            return
+        root_moves = Optional(allowed.copy())
+        moves = allowed.copy()
+
     var factors = position_time_factor(board, moves)
     var complexity = factors[0]
     var tactical = factors[1]
@@ -268,21 +335,64 @@ def handle_go(mut board: Board, command: String) raises:
         var safety = 0.95
         if remaining and remaining.value() <= 2000:
             safety = 0.85
-        deadline = Optional(
-            search_started_at + max(0.001, budget.value() * safety)
+        var usable_time = (
+            budget.value() * safety - Float64(move_overhead_ms) / 1000.0
         )
+        deadline = Optional(search_started_at + max(0.001, usable_time))
 
     if not deadline:
-        var result = board.best_move(depth)
-        if result:
-            print("bestmove", uci_move_to_string(result.value()))
-        else:
-            print("bestmove 0000")
+        var best = moves[0]
+        var previous_best: Optional[Move] = None
+        var total_nodes = 0
+        for current_depth in range(1, depth + 1):
+            try:
+                var result: Optional[Move]
+                if workers > 1:
+                    result = board.best_move_two_workers(
+                        current_depth,
+                        None,
+                        Optional(root_moves.value().copy()) if root_moves else None,
+                        previous_best,
+                    )
+                else:
+                    result = board.best_move(
+                        current_depth, None,
+                        Optional(root_moves.value().copy()) if root_moves else None,
+                        previous_best,
+                    )
+                if result:
+                    best = result.value()
+                    previous_best = Optional(best)
+                    total_nodes += board.last_search_nodes
+                    var elapsed_ms = Int(
+                        (Float64(monotonic()) / 1_000_000_000.0
+                         - search_started_at) * 1000.0
+                    )
+                    var nps = Int(
+                        Float64(total_nodes) * 1000.0
+                        / Float64(max(elapsed_ms, 1))
+                    )
+                    print(
+                        "info depth", current_depth, "time", elapsed_ms,
+                        "nodes", total_nodes, "nps", nps,
+                        "pv", uci_move_to_string(best),
+                    )
+            except e:
+                total_nodes += board.last_search_nodes
+                print(
+                    "info string search stopped before completing depth",
+                    current_depth,
+                )
+                break
+        print_search_totals(total_nodes, search_started_at)
+        print("bestmove", uci_move_to_string(best))
         return
 
     var ordered_moves = board.order_moves(moves)
     var best_move = ordered_moves[0]
     var max_depth = depth
+    var previous_best: Optional[Move] = None
+    var total_nodes = 0
     if not has_depth_limit:
         max_depth = 64
         if budget:
@@ -295,18 +405,54 @@ def handle_go(mut board: Board, command: String) raises:
 
     for current_depth in range(1, max_depth + 1):
         try:
-            var candidate = board.best_move(current_depth, deadline)
+            var candidate: Optional[Move]
+            if workers > 1 and budget and budget.value() >= 0.8:
+                candidate = board.best_move_two_workers(
+                    current_depth,
+                    deadline,
+                    Optional(root_moves.value().copy()) if root_moves else None,
+                    previous_best,
+                )
+            else:
+                candidate = board.best_move(
+                    current_depth, deadline,
+                    Optional(root_moves.value().copy()) if root_moves else None,
+                    previous_best,
+                )
             if candidate:
                 best_move = candidate.value()
+                previous_best = Optional(best_move)
+                total_nodes += board.last_search_nodes
+                var elapsed_ms = Int(
+                    (Float64(monotonic()) / 1_000_000_000.0
+                     - search_started_at) * 1000.0
+                )
+                var nps = Int(
+                    Float64(total_nodes) * 1000.0
+                    / Float64(max(elapsed_ms, 1))
+                )
+                print(
+                    "info depth", current_depth, "time", elapsed_ms,
+                    "nodes", total_nodes, "nps", nps,
+                    "pv", uci_move_to_string(best_move),
+                )
         except e:
+            total_nodes += board.last_search_nodes
+            print(
+                "info string search stopped before completing depth",
+                current_depth,
+            )
             break
 
+    print_search_totals(total_nodes, search_started_at)
     print("bestmove", uci_move_to_string(best_move))
 
 
 def run() raises:
     var board = Board()
     var sys = Python.import_module("sys")
+    var move_overhead_ms = 30
+    var workers = 2
 
     while True:
         var line = sys.stdin.readline()
@@ -321,6 +467,8 @@ def run() raises:
         if parts[0] == "uci":
             print("id name Bytefish Mojo")
             print("id author nichtnichtjemand")
+            print("option name Move Overhead type spin default 30 min 0 max 1000")
+            print("option name Threads type spin default 2 min 1 max 2")
             print("uciok")
         elif parts[0] == "isready":
             print("readyok")
@@ -329,13 +477,59 @@ def run() raises:
         elif parts[0] == "position":
             handle_position(board, command)
         elif parts[0] == "go":
-            handle_go(board, command)
+            handle_go(board, command, move_overhead_ms, workers)
+        elif parts[0] == "perft":
+            if len(parts) < 2:
+                print("info string perft requires a depth")
+            else:
+                try:
+                    var perft_depth = Int(parts[1])
+                    if perft_depth < 0:
+                        print("info string Invalid perft depth")
+                    else:
+                        print("info string perft nodes", perft(board, perft_depth))
+                except e:
+                    print("info string Invalid perft depth")
         elif parts[0] == "quit":
             return
         elif parts[0] == "stop":
             continue
         elif parts[0] == "setoption":
-            print("info string Byfish does not support this option")
+            var name_index = _find_token(parts, "name")
+            var value_index = _find_token(parts, "value")
+            if name_index < 0 or value_index < 0 or value_index <= name_index:
+                print("info string Invalid setoption command")
+            else:
+                var option_name = String(parts[name_index + 1])
+                if option_name == "Threads":
+                    if value_index + 1 >= len(parts):
+                        print("info string Threads must be 1 or 2")
+                    else:
+                        try:
+                            var thread_count = Int(parts[value_index + 1])
+                            if thread_count != 1 and thread_count != 2:
+                                print("info string Threads must be 1 or 2")
+                            else:
+                                workers = thread_count
+                                print("info string Threads set to", workers)
+                        except e:
+                            print("info string Threads must be 1 or 2")
+                elif (
+                    option_name == "Move" and value_index == name_index + 3
+                    and String(parts[name_index + 2]) == "Overhead"
+                    and value_index + 1 < len(parts)
+                ):
+                    try:
+                        var overhead = Int(parts[value_index + 1])
+                        if overhead < 0 or overhead > 1000:
+                            print("info string Move Overhead must be 0 to 1000")
+                        else:
+                            move_overhead_ms = overhead
+                            print("info string Move Overhead set to", overhead)
+                    except e:
+                        print("info string Move Overhead must be 0 to 1000")
+                else:
+                    print("info string Unsupported option")
 
         sys.stdout.flush()
 
