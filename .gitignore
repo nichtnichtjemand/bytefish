@@ -1,2 +1,6 @@
 __pycache__/*
 .vscode/*
+.mojo-cache/*
+.pytest_cache/*
+.agents/*
+.codex/*
