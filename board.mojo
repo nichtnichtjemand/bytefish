@@ -30,6 +30,7 @@ struct Board:
     var repetition_counts: List[String]
     var last_search_score: Int
     var last_search_nodes: Int
+    var last_search_gap: Int
     # A Python list is deliberately shared by all board copies made during
     # search. It carries UCI stop/ponder state into the recursive search.
     var search_control: PythonObject
@@ -44,6 +45,7 @@ struct Board:
         self.repetition_counts = List[String]()
         self.last_search_score = 0
         self.last_search_nodes = 0
+        self.last_search_gap = 0
         var builtins = Python.import_module("builtins")
         self.search_control = builtins.list()
         self.search_control.append(False)  # stop requested
@@ -52,6 +54,9 @@ struct Board:
         self.search_control.append(0.0)    # time budget after ponderhit
         self.search_control.append(False)  # quit requested
         self.search_control.append(0)      # input polling counter
+        self.search_control.append(0)      # optional node limit
+        self.search_control.append(0)      # searched node counter
+        self.search_control.append(0.0)    # clock start after ponderhit
         if not empty:
             self.reset()
 
@@ -103,6 +108,7 @@ struct Board:
         result.repetition_counts = self.repetition_counts.copy()
         result.last_search_score = self.last_search_score
         result.last_search_nodes = self.last_search_nodes
+        result.last_search_gap = self.last_search_gap
         result.search_control = self.search_control
 
         return result^
@@ -1206,6 +1212,7 @@ struct Board:
     ) raises -> Int:
         self._check_deadline(deadline)
         self.last_search_nodes = 1
+        self._count_search_node()
 
         var drawn = (
             self.is_threefold_repetition()
@@ -1316,6 +1323,7 @@ struct Board:
             return self.quiescence(alpha, beta, deadline)
 
         self.last_search_nodes = 1
+        self._count_search_node()
 
         var drawn = (
             self.is_threefold_repetition()
@@ -1405,6 +1413,7 @@ struct Board:
         self.last_search_nodes = 0
         self._check_deadline(deadline)
         self.last_search_nodes = 1
+        self._count_search_node()
         var moves = self.get_legal_moves()
         if root_moves:
             var allowed = root_moves.value().copy()
@@ -1457,11 +1466,13 @@ struct Board:
                 ordered = preferred_first^
         var best = ordered[0]
         var best_score = INF
+        var second_best_score = INF
         var local_alpha = -INF
         var local_beta = INF
 
         if not self.current_turn:
             best_score = -INF
+            second_best_score = -INF
 
         for move in ordered:
             self._check_deadline(deadline)
@@ -1478,22 +1489,32 @@ struct Board:
 
             if self.current_turn:
                 if score < best_score:
+                    second_best_score = best_score
                     best_score = score
                     best = move
+                elif score < second_best_score:
+                    second_best_score = score
                 if best_score < local_beta:
                     local_beta = best_score
                 if local_beta <= local_alpha:
                     break
             else:
                 if score > best_score:
+                    second_best_score = best_score
                     best_score = score
                     best = move
+                elif score > second_best_score:
+                    second_best_score = score
                 if best_score > local_alpha:
                     local_alpha = best_score
                 if local_beta <= local_alpha:
                     break
 
         self.last_search_score = best_score
+        if second_best_score != INF and second_best_score != -INF:
+            self.last_search_gap = abs(second_best_score - best_score)
+        else:
+            self.last_search_gap = 0
         return Optional(best)
 
     def best_move_two_workers(
@@ -1654,9 +1675,14 @@ struct Board:
                     if self.search_control[1]:
                         var now = Float64(monotonic()) / 1_000_000_000.0
                         self.search_control[1] = False
-                        self.search_control[2] = now + Float64(
+                        var ponder_duration = Float64(
                             String(py=self.search_control[3])
                         )
+                        if ponder_duration > 0.0:
+                            self.search_control[2] = now + ponder_duration
+                        else:
+                            self.search_control[2] = None
+                        self.search_control[8] = now
                 elif incoming == "quit":
                     self.search_control[0] = True
                     self.search_control[1] = False
@@ -1672,6 +1698,15 @@ struct Board:
         if deadline:
             if Float64(monotonic()) / 1_000_000_000.0 >= deadline.value():
                 raise Error("Search deadline reached")
+
+    def _count_search_node(mut self) raises:
+        var limit = Int(String(py=self.search_control[6]))
+        if limit <= 0:
+            return
+        var searched = Int(String(py=self.search_control[7])) + 1
+        self.search_control[7] = searched
+        if searched > limit:
+            raise Error("Search node limit reached")
 
     def load_fen(mut self, fen: String) raises:
         var parts = fen.split(" ")

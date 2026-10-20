@@ -220,6 +220,23 @@ def handle_go(
     var has_depth_limit = depth_index >= 0
     var pondering = _find_token(parts, "ponder") >= 0
     var infinite = _find_token(parts, "infinite") >= 0
+    var nodes_limit: Optional[Int]
+    var mate_limit: Optional[Int]
+    try:
+        nodes_limit = _parse_clock_value(parts, "nodes")
+        mate_limit = _parse_clock_value(parts, "mate")
+    except e:
+        print("info string Invalid search limit")
+        return
+    if nodes_limit and nodes_limit.value() == 0:
+        print("info string Invalid nodes")
+        return
+    if mate_limit and mate_limit.value() == 0:
+        print("info string Invalid mate")
+        return
+    if mate_limit and not has_depth_limit:
+        depth = mate_limit.value() * 2
+        has_depth_limit = True
 
     board.search_control[0] = False
     board.search_control[1] = pondering
@@ -227,8 +244,11 @@ def handle_go(
     board.search_control[3] = 0.0
     board.search_control[4] = False
     board.search_control[5] = 0
+    board.search_control[6] = nodes_limit.value() if nodes_limit else 0
+    board.search_control[7] = 0
+    board.search_control[8] = 0.0
 
-    if has_depth_limit:
+    if depth_index >= 0:
         if depth_index + 1 >= len(parts):
             print("info string Invalid depth")
             return
@@ -283,6 +303,7 @@ def handle_go(
                 token == "wtime" or token == "btime" or token == "winc"
                 or token == "binc" or token == "movestogo"
                 or token == "movetime" or token == "depth"
+                or token == "nodes" or token == "mate"
                 or token == "ponder" or token == "infinite"
             ):
                 break
@@ -315,7 +336,6 @@ def handle_go(
         moves = allowed.copy()
 
     var factors = position_time_factor(board, moves)
-    var complexity = factors[0]
     var tactical = factors[1]
     var remaining: Optional[Int]
     var increment: Int
@@ -326,41 +346,84 @@ def handle_go(
         remaining = black_time
         increment = black_increment
 
-    var budget: Optional[Float64]
+    var available_time: Optional[Float64] = None
+    var base_budget: Optional[Float64] = None
+    if remaining:
+        var own_ms = Float64(remaining.value())
+        var reserve_ms = min(300.0, max(30.0, own_ms * 0.01))
+        var available_ms = max(
+            0.0, own_ms - Float64(move_overhead_ms) - reserve_ms
+        )
+        var moves_left = 30
+        if moves_to_go:
+            moves_left = max(1, moves_to_go.value())
+        var increment_seconds = Float64(increment) / 1000.0
+        var base_seconds = min(
+            available_ms / 1000.0,
+            available_ms / (1000.0 * Float64(moves_left))
+                + increment_seconds * 0.5,
+        )
+        available_time = Optional(available_ms / 1000.0)
+        base_budget = Optional(base_seconds)
     if movetime:
-        budget = calculate_search_budget(
-            None, movetime_ms=movetime, complexity=complexity
+        var movetime_available = max(
+            0.0,
+            Float64(movetime.value() - move_overhead_ms) / 1000.0,
         )
-    else:
-        budget = calculate_search_budget(
-            remaining, increment, moves_to_go, complexity=complexity
-        )
+        if available_time:
+            available_time = Optional(
+                min(available_time.value(), movetime_available)
+            )
+            base_budget = Optional(
+                min(base_budget.value(), movetime_available)
+            )
+        else:
+            available_time = Optional(movetime_available)
+            base_budget = Optional(movetime_available)
+
+    var budget: Optional[Float64] = base_budget
     if budget:
         print("info string budget:", budget.value())
     else:
         print("info string no budget")
 
     var deadline: Optional[Float64] = None
-    if budget:
-        var safety = 0.95
-        if remaining and remaining.value() <= 2000:
-            safety = 0.85
-        var usable_time = (
-            budget.value() * safety - Float64(move_overhead_ms) / 1000.0
+    var soft_limit = 0.0
+    var hard_limit = 0.0
+    if budget and available_time:
+        if movetime:
+            soft_limit = min(available_time.value(), budget.value())
+            hard_limit = soft_limit
+        else:
+            var tactical_bonus = 0.2 if tactical else 0.0
+            var initial_factor = 1.0 + tactical_bonus
+            soft_limit = min(
+                available_time.value(), budget.value() * initial_factor
+            )
+            hard_limit = min(
+                available_time.value(),
+                max(soft_limit, budget.value() * 2.0),
+            )
+        # Pondering needs a hard ceiling available immediately on ponderhit;
+        # ordinary search may extend from 2B to 3B after instability appears.
+        var ponder_hard = min(
+            available_time.value(), max(soft_limit, budget.value() * 3.0)
         )
-        board.search_control[3] = max(0.001, usable_time)
-    if budget and not pondering:
-        var usable_time = Float64(String(py=board.search_control[3]))
-        deadline = Optional(search_started_at + max(0.001, usable_time))
+        board.search_control[3] = ponder_hard
+        if not pondering and not infinite:
+            deadline = Optional(search_started_at + hard_limit)
 
     if not deadline and not pondering and not infinite:
         var best = moves[0]
         var previous_best: Optional[Move] = None
         var total_nodes = 0
-        for current_depth in range(1, depth + 1):
+        var no_clock_max_depth = depth
+        if nodes_limit and not has_depth_limit:
+            no_clock_max_depth = 64
+        for current_depth in range(1, no_clock_max_depth + 1):
             try:
                 var result: Optional[Move]
-                if workers > 1:
+                if workers > 1 and not nodes_limit:
                     result = board.best_move_two_workers(
                         current_depth,
                         None,
@@ -390,6 +453,8 @@ def handle_go(
                         "nodes", total_nodes, "nps", nps,
                         "pv", uci_move_to_string(best),
                     )
+                    if mate_limit and abs(board.last_search_score) >= 99000:
+                        break
             except e:
                 total_nodes += board.last_search_nodes
                 print(
@@ -398,7 +463,8 @@ def handle_go(
                 )
                 break
         print_search_totals(total_nodes, search_started_at)
-        print("bestmove", uci_move_to_string(best))
+        if String(py=board.search_control[4]) != "True":
+            print("bestmove", uci_move_to_string(best))
         return
 
     var ordered_moves = board.order_moves(moves)
@@ -406,38 +472,88 @@ def handle_go(
     var max_depth = depth
     var previous_best: Optional[Move] = None
     var total_nodes = 0
+    var best_history = List[Move]()
+    var score_history = List[Int]()
     if (pondering or infinite) and not has_depth_limit:
         max_depth = 64
     elif not has_depth_limit:
         max_depth = 64
-        if budget:
-            if budget.value() <= 0.15:
-                max_depth = 2
-            elif budget.value() <= 0.5:
-                max_depth = 3
-        if tactical and max_depth < 4:
-            max_depth = 4
 
     for current_depth in range(1, max_depth + 1):
         try:
-            var candidate: Optional[Move]
-            if workers > 1 and not pondering and budget and budget.value() >= 0.8:
-                candidate = board.best_move_two_workers(
-                    current_depth,
-                    deadline,
-                    Optional(root_moves.value().copy()) if root_moves else None,
-                    previous_best,
-                )
-            else:
-                candidate = board.best_move(
-                    current_depth, deadline,
-                    Optional(root_moves.value().copy()) if root_moves else None,
-                    previous_best,
-                )
+            var candidate = board.best_move(
+                current_depth, deadline,
+                Optional(root_moves.value().copy()) if root_moves else None,
+                previous_best,
+            )
             if candidate:
                 best_move = candidate.value()
                 previous_best = Optional(best_move)
                 total_nodes += board.last_search_nodes
+                best_history.append(best_move)
+                score_history.append(board.last_search_score)
+                if len(best_history) > 3:
+                    _ = best_history.pop(0)
+                    _ = score_history.pop(0)
+
+                var move_switches = 0
+                for index in range(1, len(best_history)):
+                    var earlier = best_history[index - 1]
+                    var later = best_history[index]
+                    if (
+                        earlier.from_field != later.from_field
+                        or earlier.to_field != later.to_field
+                        or earlier.promotion != later.promotion
+                    ):
+                        move_switches += 1
+
+                var score_swings = 0
+                if len(score_history) >= 2:
+                    for index in range(1, len(score_history)):
+                        var old_score = score_history[index - 1]
+                        var new_score = score_history[index]
+                        if abs(old_score) < 90000 and abs(new_score) < 90000:
+                            if abs(new_score - old_score) >= 150:
+                                score_swings += 1
+
+                var p_factor = 0.0
+                if move_switches == 1:
+                    p_factor = 0.15
+                elif move_switches >= 2:
+                    p_factor = 0.5
+                var v_factor = 0.0
+                if score_swings >= 2:
+                    v_factor = 0.5
+                elif score_swings == 1:
+                    v_factor = 0.2
+                var c_factor = 0.2 if tactical else 0.0
+                if len(moves) > 1 and board.last_search_gap < 40:
+                    c_factor += 0.1
+                var q_factor = 0.0
+                if (
+                    len(best_history) == 3 and move_switches == 0
+                    and board.last_search_gap >= 100 and not tactical
+                ):
+                    q_factor = 0.3
+                var stability_factor = max(
+                    0.6,
+                    min(2.0, 1.0 + p_factor + v_factor + c_factor - q_factor),
+                )
+                var hard_multiplier = 2.0
+                if move_switches >= 2 or score_swings >= 2:
+                    hard_multiplier = 3.0
+                if available_time and base_budget and not movetime:
+                    soft_limit = min(
+                        available_time.value(),
+                        base_budget.value() * stability_factor,
+                    )
+                    hard_limit = min(
+                        available_time.value(),
+                        max(soft_limit, base_budget.value() * hard_multiplier),
+                    )
+                    if not pondering and not infinite:
+                        deadline = Optional(search_started_at + hard_limit)
+
                 var elapsed_ms = Int(
                     (Float64(monotonic()) / 1_000_000_000.0
                      - search_started_at) * 1000.0
@@ -451,6 +567,25 @@ def handle_go(
                     "nodes", total_nodes, "nps", nps,
                     "pv", uci_move_to_string(best_move),
                 )
+                if available_time and not infinite:
+                    var now = Float64(monotonic()) / 1_000_000_000.0
+                    var active_start = search_started_at
+                    if pondering and not String(py=board.search_control[1]) == "True":
+                        var ponder_start = Float64(
+                            String(py=board.search_control[8])
+                        )
+                        if ponder_start > 0.0:
+                            active_start = ponder_start
+                    var elapsed_search = now - active_start
+                    if elapsed_search >= hard_limit:
+                        break
+                    if (
+                        elapsed_search >= soft_limit and move_switches == 0
+                        and score_swings == 0 and len(best_history) >= 2
+                    ):
+                        break
+                if mate_limit and abs(board.last_search_score) >= 99000:
+                    break
         except e:
             total_nodes += board.last_search_nodes
             print(
@@ -467,8 +602,8 @@ def handle_go(
 def run() raises:
     var board = Board()
     var sys = Python.import_module("sys")
-    var move_overhead_ms = 30
-    var workers = 2
+    var move_overhead_ms = 50
+    var workers = 1
 
     while True:
         var line = sys.stdin.readline()
@@ -483,8 +618,8 @@ def run() raises:
         if parts[0] == "uci":
             print("id name Bytefish Mojo")
             print("id author nichtnichtjemand")
-            print("option name Move Overhead type spin default 30 min 0 max 1000")
-            print("option name Threads type spin default 2 min 1 max 2")
+            print("option name Move Overhead type spin default 50 min 0 max 1000")
+            print("option name Threads type spin default 1 min 1 max 2")
             print("uciok")
         elif parts[0] == "isready":
             print("readyok")

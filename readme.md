@@ -41,15 +41,16 @@ The UCI option `SyzygyPath` can be used to configure another tablebase directory
 setoption name SyzygyPath value /path/to/syzygy
 ```
 
-The engine accepts standard UCI time controls. Clock time is divided into
-small per-move budgets (with a safety reserve), and `movetime` is treated as a
-maximum rather than a requirement. The search also stops early when the best
-move remains stable:
-
-Without `movestogo`, clock allocation assumes 40 moves remain and scales down
-with the current clock. Tactical positions can add at most 10% to that
-allocation, preserving time for later moves. A `movetime` request is kept below
-its limit even in tactical positions.
+The engine accepts standard UCI time controls. In clock mode, its base budget
+uses the remaining time after configurable move overhead and a small reserve,
+plus half the per-move increment. Without `movestogo`, it assumes 30 moves
+remain. Iterative deepening adjusts a soft limit from best-move stability,
+score swings, tactical signals, and the gap between the top candidates. It may
+continue past the soft limit while the search remains unstable, up to a hard
+limit capped by the available clock. `go movetime X` reserves the configured
+overhead and treats the remainder as both its soft and hard limit. `depth`,
+`nodes`, and `mate` remain active alongside clock limits; `go infinite` ignores
+clock limits until stopped.
 
 ```
 go wtime 30000 btime 30000 winc 500 binc 500 movestogo 20
@@ -62,14 +63,10 @@ without using the clock. `ponderhit` starts the normal clock budget for the
 current side; `stop` ends the search and returns its best move, and `quit`
 exits without emitting a move.
 
-Time management is position-aware: tactical positions (check, captures,
-promotions, or very few legal moves) receive more time, while quiet positions
-and simple endgames receive less. Legal-move count, material phase, increment,
-remaining time, and `movestogo` are combined before the deadline is chosen.
-Bullet and fast blitz still receive conservative safety reserves for
-communication and network lag. For example, with one second remaining and no
-increment, a quiet position targets about 85 ms, while a tactical position may
-receive more without risking the clock.
+The default move overhead is 50 ms and can be changed with the UCI `Move
+Overhead` option. The reserve is 1% of the remaining clock, bounded between 30
+and 300 ms. If the hard limit is reached during an iteration, Bytefish returns
+the best move from the last fully completed iteration.
 
 Positions can be sent with a complete FEN, optionally followed by moves:
 
