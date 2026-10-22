@@ -43,12 +43,12 @@ setoption name SyzygyPath value /path/to/syzygy
 
 The engine accepts standard UCI time controls. In clock mode, its base budget
 uses the remaining time after configurable move overhead and a small reserve,
-plus half the per-move increment. Without `movestogo`, it assumes 30 moves
+plus half the per-move increment. Without `movestogo`, it assumes 60 moves
 remain. Iterative deepening adjusts a soft limit from best-move stability,
 score swings, tactical signals, and the gap between the top candidates. It may
 continue past the soft limit while the search remains unstable, up to a hard
 limit capped by the available clock. `go movetime X` reserves the configured
-overhead and treats the remainder as both its soft and hard limit. `depth`,
+overhead and uses 75% of the remainder as its soft and hard limit. `depth`,
 `nodes`, and `mate` remain active alongside clock limits; `go infinite` ignores
 clock limits until stopped.
 

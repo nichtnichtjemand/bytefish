@@ -4,6 +4,7 @@ from std.python import Python
 
 from board import Board
 from move import Move
+from piece_types import EMPTY
 
 
 def calculate_search_budget(
@@ -84,7 +85,7 @@ def position_time_factor(
     for move in moves:
         if board.board[move.to_row][
             move.to_column
-        ].piece != "" or board.is_en_passant(move):
+        ].kind != EMPTY or board.is_en_passant(move):
             captures += 1
         if move.promotion:
             promotions += 1
@@ -354,7 +355,7 @@ def handle_go(
         var available_ms = max(
             0.0, own_ms - Float64(move_overhead_ms) - reserve_ms
         )
-        var moves_left = 30
+        var moves_left = 60
         if moves_to_go:
             moves_left = max(1, moves_to_go.value())
         var increment_seconds = Float64(increment) / 1000.0
@@ -368,7 +369,7 @@ def handle_go(
     if movetime:
         var movetime_available = max(
             0.0,
-            Float64(movetime.value() - move_overhead_ms) / 1000.0,
+            Float64(movetime.value() - move_overhead_ms) / 1000.0 * 0.75,
         )
         if available_time:
             available_time = Optional(
@@ -395,19 +396,19 @@ def handle_go(
             soft_limit = min(available_time.value(), budget.value())
             hard_limit = soft_limit
         else:
-            var tactical_bonus = 0.2 if tactical else 0.0
+            var tactical_bonus = 0.1 if tactical else 0.0
             var initial_factor = 1.0 + tactical_bonus
             soft_limit = min(
                 available_time.value(), budget.value() * initial_factor
             )
             hard_limit = min(
                 available_time.value(),
-                max(soft_limit, budget.value() * 2.0),
+                max(soft_limit, budget.value() * 1.5),
             )
         # Pondering needs a hard ceiling available immediately on ponderhit;
-        # ordinary search may extend from 2B to 3B after instability appears.
+        # ordinary search may extend from 1.5B to 2B after sustained instability.
         var ponder_hard = min(
-            available_time.value(), max(soft_limit, budget.value() * 3.0)
+            available_time.value(), max(soft_limit, budget.value() * 2.0)
         )
         board.search_control[3] = ponder_hard
         if not pondering and not infinite:
@@ -516,6 +517,23 @@ def handle_go(
                             if abs(new_score - old_score) >= 150:
                                 score_swings += 1
 
+                var latest_move_stable = False
+                var latest_score_stable = False
+                if len(best_history) >= 2 and len(score_history) >= 2:
+                    var prior_best = best_history[len(best_history) - 2]
+                    var prior_score = score_history[len(score_history) - 2]
+                    latest_move_stable = (
+                        prior_best.from_field == best_move.from_field
+                        and prior_best.to_field == best_move.to_field
+                        and prior_best.promotion == best_move.promotion
+                    )
+                    if abs(prior_score) < 90000 and abs(board.last_search_score) < 90000:
+                        latest_score_stable = (
+                            abs(board.last_search_score - prior_score) < 150
+                        )
+                    elif abs(prior_score) >= 90000 and abs(board.last_search_score) >= 90000:
+                        latest_score_stable = prior_score == board.last_search_score
+
                 var p_factor = 0.0
                 if move_switches == 1:
                     p_factor = 0.15
@@ -526,9 +544,9 @@ def handle_go(
                     v_factor = 0.5
                 elif score_swings == 1:
                     v_factor = 0.2
-                var c_factor = 0.2 if tactical else 0.0
+                var c_factor = 0.1 if tactical else 0.0
                 if len(moves) > 1 and board.last_search_gap < 40:
-                    c_factor += 0.1
+                    c_factor += 0.05
                 var q_factor = 0.0
                 if (
                     len(best_history) == 3 and move_switches == 0
@@ -539,9 +557,9 @@ def handle_go(
                     0.6,
                     min(2.0, 1.0 + p_factor + v_factor + c_factor - q_factor),
                 )
-                var hard_multiplier = 2.0
-                if move_switches >= 2 or score_swings >= 2:
-                    hard_multiplier = 3.0
+                var hard_multiplier = 1.5
+                if move_switches >= 2 and score_swings >= 2:
+                    hard_multiplier = 2.0
                 if available_time and base_budget and not movetime:
                     soft_limit = min(
                         available_time.value(),
@@ -581,7 +599,7 @@ def handle_go(
                         break
                     if (
                         elapsed_search >= soft_limit and move_switches == 0
-                        and score_swings == 0 and len(best_history) >= 2
+                        and latest_move_stable and latest_score_stable
                     ):
                         break
                 if mate_limit and abs(board.last_search_score) >= 99000:

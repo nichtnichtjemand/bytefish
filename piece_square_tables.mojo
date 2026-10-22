@@ -159,8 +159,24 @@ def eg_value(piece_type: String) -> Int:
     return materialize[EG_VALUES]()[_piece_index(piece_type)]
 
 
+def _piece_index(piece_kind: UInt8) -> Int:
+    return Int(piece_kind) - 1
+
+
+def mg_value(piece_kind: UInt8) -> Int:
+    return materialize[MG_VALUES]()[_piece_index(piece_kind)]
+
+
+def eg_value(piece_kind: UInt8) -> Int:
+    return materialize[EG_VALUES]()[_piece_index(piece_kind)]
+
+
 def gamephase_increment(piece_type: String) -> Int:
     return materialize[GAMEPHASE_INCREMENTS]()[_piece_index(piece_type)]
+
+
+def gamephase_increment(piece_kind: UInt8) -> Int:
+    return materialize[GAMEPHASE_INCREMENTS]()[_piece_index(piece_kind)]
 
 
 def _piece_square_bonus(
@@ -197,6 +213,34 @@ def mg_piece_square_bonus(piece_type: String, row: Int, column: Int) -> Int:
 
 def eg_piece_square_bonus(piece_type: String, row: Int, column: Int) -> Int:
     return _piece_square_bonus(piece_type, row, column, True)
+
+
+def mg_piece_square_bonus(piece_kind: UInt8, row: Int, column: Int) -> Int:
+    if piece_kind == UInt8(1):
+        return materialize[MG_PAWN_TABLE]()[row][column]
+    if piece_kind == UInt8(2):
+        return materialize[MG_KNIGHT_TABLE]()[row][column]
+    if piece_kind == UInt8(3):
+        return materialize[MG_BISHOP_TABLE]()[row][column]
+    if piece_kind == UInt8(4):
+        return materialize[MG_ROOK_TABLE]()[row][column]
+    if piece_kind == UInt8(5):
+        return materialize[MG_QUEEN_TABLE]()[row][column]
+    return materialize[MG_KING_TABLE]()[row][column]
+
+
+def eg_piece_square_bonus(piece_kind: UInt8, row: Int, column: Int) -> Int:
+    if piece_kind == UInt8(1):
+        return materialize[EG_PAWN_TABLE]()[row][column]
+    if piece_kind == UInt8(2):
+        return materialize[EG_KNIGHT_TABLE]()[row][column]
+    if piece_kind == UInt8(3):
+        return materialize[EG_BISHOP_TABLE]()[row][column]
+    if piece_kind == UInt8(4):
+        return materialize[EG_ROOK_TABLE]()[row][column]
+    if piece_kind == UInt8(5):
+        return materialize[EG_QUEEN_TABLE]()[row][column]
+    return materialize[EG_KING_TABLE]()[row][column]
 
 
 # Kept for callers that need a phase-specific piece-square bonus.

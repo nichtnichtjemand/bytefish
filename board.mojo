@@ -4,6 +4,7 @@ from std.python import Python, PythonObject
 
 from move import Move
 from piece import Piece
+from piece_types import EMPTY, PAWN, KNIGHT, BISHOP, ROOK, QUEEN, KING
 import piece_square_tables as tables
 
 
@@ -35,7 +36,11 @@ struct Board:
     # search. It carries UCI stop/ponder state into the recursive search.
     var search_control: PythonObject
 
-    def __init__(out self, empty: Bool = False) raises:
+    def __init__(
+        out self,
+        empty: Bool = False,
+        shared_search_control: Optional[PythonObject] = None,
+    ) raises:
         self.current_turn = True
         self.board = List[List[Piece]]()
         self.castling_rights = "KQkq"
@@ -46,17 +51,20 @@ struct Board:
         self.last_search_score = 0
         self.last_search_nodes = 0
         self.last_search_gap = 0
-        var builtins = Python.import_module("builtins")
-        self.search_control = builtins.list()
-        self.search_control.append(False)  # stop requested
-        self.search_control.append(False)  # pondering
-        self.search_control.append(None)   # active deadline
-        self.search_control.append(0.0)    # time budget after ponderhit
-        self.search_control.append(False)  # quit requested
-        self.search_control.append(0)      # input polling counter
-        self.search_control.append(0)      # optional node limit
-        self.search_control.append(0)      # searched node counter
-        self.search_control.append(0.0)    # clock start after ponderhit
+        if shared_search_control:
+            self.search_control = shared_search_control.value()
+        else:
+            var builtins = Python.import_module("builtins")
+            self.search_control = builtins.list()
+            self.search_control.append(False)  # stop requested
+            self.search_control.append(False)  # pondering
+            self.search_control.append(None)   # active deadline
+            self.search_control.append(0.0)    # time budget after ponderhit
+            self.search_control.append(False)  # quit requested
+            self.search_control.append(0)      # input polling counter
+            self.search_control.append(0)      # optional node limit
+            self.search_control.append(0)      # searched node counter
+            self.search_control.append(0.0)    # clock start after ponderhit
         if not empty:
             self.reset()
 
@@ -94,7 +102,7 @@ struct Board:
     def copy(self) raises -> Board:
         # Search creates a board copy at nearly every node. Skip constructing
         # and then throwing away the initial position in that hot path.
-        var result = Board(True)
+        var result = Board(True, Optional(self.search_control))
         result.board = List[List[Piece]]()
 
         for row in range(8):
@@ -129,8 +137,8 @@ struct Board:
             for column in range(8):
                 var piece = self.board[row][column]
                 if (
-                    piece.piece != ""
-                    and piece.type == "k"
+                    piece.kind != EMPTY
+                    and piece.kind == KING
                     and piece.color == color
                 ):
                     return Optional(KingPos(row, column))
@@ -149,13 +157,13 @@ struct Board:
         var scan_column = column + column_step
         while self._inside(scan_row, scan_column):
             var piece = self.board[scan_row][scan_column]
-            if piece.piece != "":
+            if piece.kind != EMPTY:
                 if piece.color == by_color:
-                    if piece.type == "q":
+                    if piece.kind == QUEEN:
                         return True
-                    if diagonal and piece.type == "b":
+                    if diagonal and piece.kind == BISHOP:
                         return True
-                    if not diagonal and piece.type == "r":
+                    if not diagonal and piece.kind == ROOK:
                         return True
                 return False
             scan_row += row_step
@@ -171,11 +179,11 @@ struct Board:
             pawn_row = row - 1
         if self._inside(pawn_row, column - 1):
             var pawn = self.board[pawn_row][column - 1]
-            if pawn.piece != "" and pawn.color == by_color and pawn.type == "p":
+            if pawn.kind != EMPTY and pawn.color == by_color and pawn.kind == PAWN:
                 return True
         if self._inside(pawn_row, column + 1):
             var pawn = self.board[pawn_row][column + 1]
-            if pawn.piece != "" and pawn.color == by_color and pawn.type == "p":
+            if pawn.kind != EMPTY and pawn.color == by_color and pawn.kind == PAWN:
                 return True
 
         for row_offset in range(-2, 3):
@@ -187,9 +195,9 @@ struct Board:
                 if self._inside(source_row, source_column):
                     var attacker = self.board[source_row][source_column]
                     if (
-                        attacker.piece != ""
+                        attacker.kind != EMPTY
                         and attacker.color == by_color
-                        and attacker.type == "n"
+                        and attacker.kind == KNIGHT
                     ):
                         return True
 
@@ -202,9 +210,9 @@ struct Board:
                 if self._inside(source_row, source_column):
                     var attacker = self.board[source_row][source_column]
                     if (
-                        attacker.piece != ""
+                        attacker.kind != EMPTY
                         and attacker.color == by_color
-                        and attacker.type == "k"
+                        and attacker.kind == KING
                     ):
                         return True
 
@@ -243,7 +251,7 @@ struct Board:
         var column = from_column + column_step
 
         while row != to_row or column != to_column:
-            if self.board[row][column].piece != "":
+            if self.board[row][column].kind != EMPTY:
                 return False
 
             row += row_step
@@ -259,6 +267,50 @@ struct Board:
         var position = king.value()
         return self.is_square_attacked(position.row, position.column, not color)
 
+    def _is_pinned_piece(
+        self, row: Int, column: Int, king_row: Int, king_column: Int,
+        color: Bool,
+    ) -> Bool:
+        var row_delta = row - king_row
+        var column_delta = column - king_column
+        var row_step = 0
+        var column_step = 0
+
+        if row_delta == 0:
+            column_step = 1 if column_delta > 0 else -1
+        elif column_delta == 0:
+            row_step = 1 if row_delta > 0 else -1
+        elif abs(row_delta) == abs(column_delta):
+            row_step = 1 if row_delta > 0 else -1
+            column_step = 1 if column_delta > 0 else -1
+        else:
+            return False
+
+        var scan_row = king_row + row_step
+        var scan_column = king_column + column_step
+        while scan_row != row or scan_column != column:
+            if self.board[scan_row][scan_column].kind != EMPTY:
+                return False
+            scan_row += row_step
+            scan_column += column_step
+
+        scan_row += row_step
+        scan_column += column_step
+        while self._inside(scan_row, scan_column):
+            var attacker = self.board[scan_row][scan_column]
+            if attacker.kind != EMPTY:
+                if attacker.color == color:
+                    return False
+                if attacker.kind == QUEEN:
+                    return True
+                if row_step == 0 or column_step == 0:
+                    return attacker.kind == ROOK
+                return attacker.kind == BISHOP
+            scan_row += row_step
+            scan_column += column_step
+
+        return False
+
     def is_en_passant(self, move: Move) -> Bool:
         if self.en_passant_square == "-":
             return False
@@ -267,18 +319,18 @@ struct Board:
             return False
 
         var piece = self.board[move.from_row][move.from_column]
-        if piece.piece == "" or piece.type != "p":
+        if piece.kind == EMPTY or piece.kind != PAWN:
             return False
 
         return (
             move.from_column != move.to_column
-            and self.board[move.to_row][move.to_column].piece == ""
+            and self.board[move.to_row][move.to_column].kind == EMPTY
         )
 
     def _can_castle(self, move: Move) -> Bool:
         var piece = self.board[move.from_row][move.from_column]
 
-        if piece.piece == "" or piece.type != "k":
+        if piece.kind == EMPTY or piece.kind != KING:
             return False
 
         if move.from_column != 4 or move.to_row != move.from_row:
@@ -293,8 +345,8 @@ struct Board:
                     return False
 
             if (
-                self.board[move.from_row][5].piece != ""
-                or self.board[move.from_row][6].piece != ""
+                self.board[move.from_row][5].kind != EMPTY
+                or self.board[move.from_row][6].kind != EMPTY
             ):
                 return False
 
@@ -318,9 +370,9 @@ struct Board:
                     return False
 
             if (
-                self.board[move.from_row][1].piece != ""
-                or self.board[move.from_row][2].piece != ""
-                or self.board[move.from_row][3].piece != ""
+                self.board[move.from_row][1].kind != EMPTY
+                or self.board[move.from_row][2].kind != EMPTY
+                or self.board[move.from_row][3].kind != EMPTY
             ):
                 return False
 
@@ -338,10 +390,10 @@ struct Board:
         return False
 
     def _remove_castling_rights(mut self, piece: Piece) raises:
-        if piece.piece == "K":
+        if piece.kind == KING and piece.color:
             self.castling_rights = self.castling_rights.replace("K", "")
             self.castling_rights = self.castling_rights.replace("Q", "")
-        elif piece.piece == "k":
+        elif piece.kind == KING and not piece.color:
             self.castling_rights = self.castling_rights.replace("k", "")
             self.castling_rights = self.castling_rights.replace("q", "")
 
@@ -350,25 +402,25 @@ struct Board:
     ) raises:
         self._remove_castling_rights(from_piece)
 
-        if from_piece.piece == "R":
+        if from_piece.kind == ROOK and from_piece.color:
             if move.from_row == 7 and move.from_column == 0:
                 self.castling_rights = self.castling_rights.replace("Q", "")
             elif move.from_row == 7 and move.from_column == 7:
                 self.castling_rights = self.castling_rights.replace("K", "")
 
-        elif from_piece.piece == "r":
+        elif from_piece.kind == ROOK and not from_piece.color:
             if move.from_row == 0 and move.from_column == 0:
                 self.castling_rights = self.castling_rights.replace("q", "")
             elif move.from_row == 0 and move.from_column == 7:
                 self.castling_rights = self.castling_rights.replace("k", "")
 
-        if to_piece.piece == "R":
+        if to_piece.kind == ROOK and to_piece.color:
             if move.to_row == 7 and move.to_column == 0:
                 self.castling_rights = self.castling_rights.replace("Q", "")
             elif move.to_row == 7 and move.to_column == 7:
                 self.castling_rights = self.castling_rights.replace("K", "")
 
-        elif to_piece.piece == "r":
+        elif to_piece.kind == ROOK and not to_piece.color:
             if move.to_row == 0 and move.to_column == 0:
                 self.castling_rights = self.castling_rights.replace("q", "")
             elif move.to_row == 0 and move.to_column == 7:
@@ -389,7 +441,7 @@ struct Board:
 
         self.en_passant_square = "-"
 
-        if from_piece.type == "p" and (
+        if from_piece.kind == PAWN and (
             move.to_row - move.from_row == 2 or move.from_row - move.to_row == 2
         ):
             self.en_passant_square = self._square_name(
@@ -397,7 +449,7 @@ struct Board:
                 move.from_column,
             )
 
-        if from_piece.type == "p" or is_capture:
+        if from_piece.kind == PAWN or is_capture:
             self.halfmove_clock = 0
         else:
             self.halfmove_clock += 1
@@ -410,7 +462,7 @@ struct Board:
         # never recur. Keeping only the reversible suffix makes repetition
         # checks and board copies cheaper without changing draw detection.
         if (
-            from_piece.type == "p"
+            from_piece.kind == PAWN
             or is_capture
             or self.castling_rights != previous_castling_rights
         ):
@@ -426,10 +478,10 @@ struct Board:
         var from_piece = self.board[move.from_row][move.from_column]
         var to_piece = self.board[move.to_row][move.to_column]
 
-        if from_piece.piece == "" or from_piece.color != self.current_turn:
+        if from_piece.kind == EMPTY or from_piece.color != self.current_turn:
             return False
 
-        if to_piece.piece != "" and to_piece.color == self.current_turn:
+        if to_piece.kind != EMPTY and to_piece.color == self.current_turn:
             return False
 
         var legal_moves = self.get_legal_moves()
@@ -447,7 +499,7 @@ struct Board:
         if not found:
             return False
 
-        var is_capture = to_piece.piece != ""
+        var is_capture = to_piece.kind != EMPTY
         var en_passant = self.is_en_passant(move)
 
         if en_passant:
@@ -460,7 +512,7 @@ struct Board:
         self._set_square(move.to_row, move.to_column, from_piece)
         self._set_square(move.from_row, move.from_column, Piece(""))
 
-        if from_piece.type == "k" and (
+        if from_piece.kind == KING and (
             move.to_column - move.from_column == 2
             or move.from_column - move.to_column == 2
         ):
@@ -473,7 +525,7 @@ struct Board:
                 self._set_square(move.from_row, 3, rook)
                 self._set_square(move.from_row, 0, Piece(""))
 
-        if from_piece.type == "p" and (move.to_row == 0 or move.to_row == 7):
+        if from_piece.kind == PAWN and (move.to_row == 0 or move.to_row == 7):
             var promotion_piece = String("q")
             if move.promotion:
                 promotion_piece = move.promotion.value()
@@ -497,8 +549,17 @@ struct Board:
         self._finish_move(move, from_piece, to_piece, is_capture)
         return True
 
-    def get_legal_moves(self) raises -> List[Move]:
+    def get_legal_moves(
+        self, captures_only: Bool = False
+    ) raises -> List[Move]:
         var result = List[Move]()
+        var king = self._find_king(self.current_turn)
+        var in_check = True
+        if king:
+            var king_position = king.value()
+            in_check = self.is_square_attacked(
+                king_position.row, king_position.column, not self.current_turn
+            )
         var promotion_types = List[String]()
         promotion_types.append("q")
         promotion_types.append("r")
@@ -509,16 +570,32 @@ struct Board:
             for column in range(8):
                 var piece = self.board[row][column]
 
-                if piece.piece == "" or piece.color != self.current_turn:
+                if piece.kind == EMPTY or piece.color != self.current_turn:
                     continue
+
+                var must_test_king_safety = in_check or piece.kind == KING
+                if not must_test_king_safety and king:
+                    var king_position = king.value()
+                    must_test_king_safety = self._is_pinned_piece(
+                        row, column, king_position.row, king_position.column,
+                        piece.color,
+                    )
 
                 var candidates = piece.get_candidate_moves(self, row, column)
 
                 for candidate in candidates:
-                    if not piece.is_legal_move(self, candidate):
-                        continue
+                    if captures_only:
+                        var target = self.board[candidate.to_row][candidate.to_column]
+                        var promotion = piece.kind == PAWN and (
+                            candidate.to_row == 0 or candidate.to_row == 7
+                        )
+                        var capture = (
+                            target.kind != EMPTY and target.kind != KING
+                        ) or self.is_en_passant(candidate)
+                        if not capture and not promotion:
+                            continue
 
-                    if piece.type == "p" and (
+                    if piece.kind == PAWN and (
                         candidate.to_row == 0 or candidate.to_row == 7
                     ):
                         for promotion in promotion_types:
@@ -527,19 +604,37 @@ struct Board:
                                 candidate.to_field,
                                 Optional(promotion),
                             )
-                            var promoted_child = self.copy()
-                            if promoted_child._apply_unchecked(promoted_move):
-                                if not promoted_child.is_in_check(
-                                    self.current_turn
-                                ):
-                                    result.append(promoted_move)
+                            var validate = must_test_king_safety
+                            if not validate and self.is_en_passant(promoted_move):
+                                validate = True
+                            if validate:
+                                var promoted_child = self.copy()
+                                if promoted_child._apply_unchecked(promoted_move):
+                                    if not promoted_child.is_in_check(
+                                        self.current_turn
+                                    ):
+                                        result.append(promoted_move)
+                            else:
+                                result.append(promoted_move)
                     else:
-                        var child = self.copy()
-                        if child._apply_unchecked(candidate):
-                            if not child.is_in_check(self.current_turn):
-                                result.append(candidate)
+                        var validate = must_test_king_safety
+                        if (
+                            not validate
+                            and piece.kind == PAWN
+                            and candidate.from_column != candidate.to_column
+                            and self.board[candidate.to_row][candidate.to_column].kind == EMPTY
+                            and self.is_en_passant(candidate)
+                        ):
+                            validate = True
+                        if validate:
+                            var child = self.copy()
+                            if child._apply_unchecked(candidate):
+                                if not child.is_in_check(self.current_turn):
+                                    result.append(candidate)
+                        else:
+                            result.append(candidate)
 
-                if piece.type == "k":
+                if piece.kind == KING and not captures_only:
                     var kingside = Move(
                         self._square_name(row, column),
                         self._square_name(row, 6),
@@ -563,11 +658,11 @@ struct Board:
             return False
 
         var piece = self.board[move.from_row][move.from_column]
-        if piece.piece == "":
+        if piece.kind == EMPTY:
             return False
 
         var promotion_piece = String("")
-        if piece.type == "p" and (move.to_row == 0 or move.to_row == 7):
+        if piece.kind == PAWN and (move.to_row == 0 or move.to_row == 7):
             if not move.promotion:
                 return False
             promotion_piece = move.promotion.value().lower()
@@ -580,7 +675,7 @@ struct Board:
                 return False
 
         var target = self.board[move.to_row][move.to_column]
-        var capture = target.piece != ""
+        var capture = target.kind != EMPTY
         var ep = self.is_en_passant(move)
 
         if ep:
@@ -593,7 +688,7 @@ struct Board:
         self._set_square(move.to_row, move.to_column, piece)
         self._set_square(move.from_row, move.from_column, Piece(""))
 
-        if piece.type == "k" and (
+        if piece.kind == KING and (
             move.to_column - move.from_column == 2
             or move.from_column - move.to_column == 2
         ):
@@ -622,10 +717,10 @@ struct Board:
         for row in range(8):
             for column in range(8):
                 var piece = self.board[row][column]
-                if piece.piece == "":
+                if piece.kind == EMPTY:
                     continue
 
-                var value = tables.mg_value(piece.type)
+                var value = tables.mg_value(piece.kind)
 
                 if piece.color:
                     score -= value
@@ -640,14 +735,14 @@ struct Board:
         for row in range(8):
             for column in range(8):
                 var piece = self.board[row][column]
-                if piece.piece == "":
+                if piece.kind == EMPTY:
                     continue
 
                 var table_row = row
                 if piece.color:
                     table_row = 7 - row
                 var bonus = tables.mg_piece_square_bonus(
-                    piece.type, table_row, column
+                    piece.kind, table_row, column
                 )
 
                 if piece.color:
@@ -667,7 +762,7 @@ struct Board:
         for row in range(8):
             for column in range(8):
                 var piece = self.board[row][column]
-                if piece.piece == "":
+                if piece.kind == EMPTY:
                     continue
 
                 var table_row = row
@@ -675,15 +770,15 @@ struct Board:
                     table_row = 7 - row
 
                 var mg_score = (
-                    tables.mg_value(piece.type)
+                    tables.mg_value(piece.kind)
                     + tables.mg_piece_square_bonus(
-                        piece.type, table_row, column
+                        piece.kind, table_row, column
                     )
                 )
                 var eg_score = (
-                    tables.eg_value(piece.type)
+                    tables.eg_value(piece.kind)
                     + tables.eg_piece_square_bonus(
-                        piece.type, table_row, column
+                        piece.kind, table_row, column
                     )
                 )
 
@@ -693,7 +788,7 @@ struct Board:
                 else:
                     black_mg += mg_score
                     black_eg += eg_score
-                game_phase += tables.gamephase_increment(piece.type)
+                game_phase += tables.gamephase_increment(piece.kind)
 
         var mg_phase = min(game_phase, 24)
         var eg_phase = 24 - mg_phase
@@ -710,7 +805,7 @@ struct Board:
         var count = 0
         for row in range(8):
             for column in range(8):
-                if self.board[row][column].piece != "":
+                if self.board[row][column].kind != EMPTY:
                     count += 1
         return count
 
@@ -720,9 +815,9 @@ struct Board:
         for row in range(8):
             for column in range(8):
                 var piece = self.board[row][column]
-                if piece.piece != "":
+                if piece.kind != EMPTY:
                     pieces += 1
-                    if piece.type == "q":
+                    if piece.kind == QUEEN:
                         queens += 1
         return queens == 0 or pieces <= 12
 
@@ -737,16 +832,16 @@ struct Board:
         for row in range(8):
             for column in range(8):
                 var piece = self.board[row][column]
-                if piece.piece == "" or piece.type == "k":
+                if piece.kind == EMPTY or piece.kind == KING:
                     continue
-                if piece.type == "p" or piece.type == "r" or piece.type == "q":
+                if piece.kind == PAWN or piece.kind == ROOK or piece.kind == QUEEN:
                     return False
-                if piece.type == "n":
+                if piece.kind == KNIGHT:
                     if piece.color:
                         white_knights += 1
                     else:
                         black_knights += 1
-                elif piece.type == "b":
+                elif piece.kind == BISHOP:
                     if piece.color:
                         white_bishops += 1
                     else:
@@ -789,8 +884,8 @@ struct Board:
 
                 var piece = self.board[scan_row][scan_column]
                 if (
-                    piece.piece != ""
-                    and piece.type == "p"
+                    piece.kind != EMPTY
+                    and piece.kind == PAWN
                     and piece.color != color
                 ):
                     return False
@@ -806,35 +901,49 @@ struct Board:
         if not endgame:
             return 0
 
+        var king_positions_found = False
+        var white_king: Optional[KingPos] = None
+        var black_king: Optional[KingPos] = None
         var score = 0
 
         for row in range(8):
             for column in range(8):
                 var piece = self.board[row][column]
-                if piece.piece == "":
+                if piece.kind == EMPTY:
                     continue
 
                 var sign = 1
                 if piece.color:
                     sign = -1
 
-                if piece.type == "p":
+                if piece.kind == PAWN:
                     var rank = 7 - row
                     if not piece.color:
                         rank = row
                     score += sign * rank * 8
                     if self._is_passed_pawn(row, column, piece.color):
                         score += sign * (35 + rank * 12)
-                        var king_distance = self._distance_to_king(
-                            row, column, piece.color
-                        )
+                        if not king_positions_found:
+                            white_king = self._find_king(True)
+                            black_king = self._find_king(False)
+                            king_positions_found = True
+                        var king_distance = 8
+                        var king = white_king
+                        if not piece.color:
+                            king = black_king
+                        if king:
+                            var king_position = king.value()
+                            king_distance = max(
+                                abs(row - king_position.row),
+                                abs(column - king_position.column),
+                            )
                         score += sign * max(0, 24 - king_distance * 4)
-                elif piece.type == "r":
+                elif piece.kind == ROOK:
                     for pawn_row in range(8):
                         var pawn = self.board[pawn_row][column]
                         if (
-                            pawn.piece == ""
-                            or pawn.type != "p"
+                            pawn.kind == EMPTY
+                            or pawn.kind != PAWN
                             or not self._is_passed_pawn(
                                 pawn_row, column, pawn.color
                             )
@@ -853,7 +962,7 @@ struct Board:
                                 step = -1
                             var scan_row = pawn_row + step
                             while scan_row != row:
-                                if self.board[scan_row][column].piece != "":
+                                if self.board[scan_row][column].kind != EMPTY:
                                     path_clear = False
                                     break
                                 scan_row += step
@@ -863,20 +972,13 @@ struct Board:
 
         return score
 
-    def _distance_to_king(self, row: Int, column: Int, color: Bool) -> Int:
-        var king = self._find_king(color)
-        if not king:
-            return 8
-        var position = king.value()
-        return max(abs(row - position.row), abs(column - position.column))
-
     def get_hanging_piece_score(self) -> Int:
         var score = 0
 
         for row in range(8):
             for column in range(8):
                 var piece = self.board[row][column]
-                if piece.piece == "" or piece.type == "k":
+                if piece.kind == EMPTY or piece.kind == KING:
                     continue
 
                 if self.is_square_attacked(row, column, not piece.color):
@@ -886,15 +988,15 @@ struct Board:
 
                     if not defended:
                         var penalty = 0
-                        if piece.type == "p":
+                        if piece.kind == PAWN:
                             penalty = 50
-                        elif piece.type == "n":
+                        elif piece.kind == KNIGHT:
                             penalty = 150
-                        elif piece.type == "b":
+                        elif piece.kind == BISHOP:
                             penalty = 160
-                        elif piece.type == "r":
+                        elif piece.kind == ROOK:
                             penalty = 250
-                        elif piece.type == "q":
+                        elif piece.kind == QUEEN:
                             penalty = 450
 
                         if piece.color:
@@ -915,7 +1017,7 @@ struct Board:
         for row in range(8):
             for column in range(8):
                 var piece = self.board[row][column]
-                if piece.piece != "" and piece.type == "p":
+                if piece.kind != EMPTY and piece.kind == PAWN:
                     if piece.color:
                         white_pawns_by_file[column] += 1
                     else:
@@ -954,26 +1056,19 @@ struct Board:
         for row in range(8):
             for column in range(8):
                 var piece = self.board[row][column]
-                if piece.piece == "":
+                if piece.kind == EMPTY:
                     continue
 
                 var weight = 0
-                if piece.type == "n" or piece.type == "b":
+                if piece.kind == KNIGHT or piece.kind == BISHOP:
                     weight = 4
-                elif piece.type == "r":
+                elif piece.kind == ROOK:
                     weight = 2
-                elif piece.type == "q" or piece.type == "k":
+                elif piece.kind == QUEEN or piece.kind == KING:
                     weight = 1
 
                 if weight > 0:
-                    var candidates = piece.get_candidate_moves(
-                        self, row, column
-                    )
-                    var mobility = 0
-                    for move in candidates:
-                        var target = self.board[move.to_row][move.to_column]
-                        if target.piece == "" or target.color != piece.color:
-                            mobility += 1
+                    var mobility = piece.get_mobility(self, row, column)
                     var bonus = mobility * weight
                     if piece.color:
                         score -= bonus
@@ -989,11 +1084,11 @@ struct Board:
         for row in range(8):
             for column in range(8):
                 var piece = self.board[row][column]
-                if piece.piece == "":
+                if piece.kind == EMPTY:
                     continue
-                if piece.type == "q":
+                if piece.kind == QUEEN:
                     has_queen = True
-                elif piece.type == "k":
+                elif piece.kind == KING:
                     if piece.color:
                         white_king = Optional(KingPos(row, column))
                     else:
@@ -1022,8 +1117,8 @@ struct Board:
                 if self._inside(pawn_row, pawn_column):
                     var pawn = self.board[pawn_row][pawn_column]
                     if (
-                        pawn.piece != ""
-                        and pawn.type == "p"
+                        pawn.kind != EMPTY
+                        and pawn.kind == PAWN
                         and pawn.color == color
                     ):
                         shield += 1
@@ -1051,7 +1146,7 @@ struct Board:
             var empty_count = 0
             for column in range(8):
                 var piece = self.board[row][column]
-                if piece.piece == "":
+                if piece.kind == EMPTY:
                     empty_count += 1
                 else:
                     if empty_count > 0:
@@ -1076,7 +1171,10 @@ struct Board:
         self.repetition_counts.append(key)
 
     def is_threefold_repetition(self) -> Bool:
-        var current = self._position_key()
+        if len(self.repetition_counts) == 0:
+            return False
+
+        var current = self.repetition_counts[len(self.repetition_counts) - 1]
         var count = 0
 
         for key in self.repetition_counts:
@@ -1123,6 +1221,7 @@ struct Board:
         var remaining = moves.copy()
         var scores = List[Int]()
         var endgame = self.is_endgame()
+        var all_scores_zero = True
 
         # Compute each move's expensive positional score once. The previous
         # selection loop recalculated endgame and passed-pawn features every
@@ -1132,25 +1231,25 @@ struct Board:
             var target = self.board[move.to_row][move.to_column]
             var moving_piece = self.board[move.from_row][move.from_column]
 
-            if target.piece != "":
+            if target.kind != EMPTY:
                 var victim_value = 0
                 var attacker_value = 0
-                if target.type == "p":
+                if target.kind == PAWN:
                     victim_value = 1
-                elif target.type == "n" or target.type == "b":
+                elif target.kind == KNIGHT or target.kind == BISHOP:
                     victim_value = 3
-                elif target.type == "r":
+                elif target.kind == ROOK:
                     victim_value = 5
-                elif target.type == "q":
+                elif target.kind == QUEEN:
                     victim_value = 9
 
-                if moving_piece.type == "p":
+                if moving_piece.kind == PAWN:
                     attacker_value = 1
-                elif moving_piece.type == "n" or moving_piece.type == "b":
+                elif moving_piece.kind == KNIGHT or moving_piece.kind == BISHOP:
                     attacker_value = 3
-                elif moving_piece.type == "r":
+                elif moving_piece.kind == ROOK:
                     attacker_value = 5
-                elif moving_piece.type == "q":
+                elif moving_piece.kind == QUEEN:
                     attacker_value = 9
                 score += 1000 + victim_value * 10 - attacker_value
 
@@ -1167,7 +1266,7 @@ struct Board:
                 score += 1000 + 10 - 1
 
             if endgame:
-                if moving_piece.type == "p":
+                if moving_piece.kind == PAWN:
                     if move.to_row == 0 or move.to_row == 7:
                         score += 900
                     elif self._is_passed_pawn(
@@ -1176,7 +1275,7 @@ struct Board:
                         moving_piece.color,
                     ):
                         score += 120
-                elif moving_piece.type == "k":
+                elif moving_piece.kind == KING:
                     var old_distance = abs(
                         Float64(move.from_row) - 3.5
                     ) + abs(Float64(move.from_column) - 3.5)
@@ -1185,7 +1284,12 @@ struct Board:
                     ) + abs(Float64(move.to_column) - 3.5)
                     if new_distance < old_distance:
                         score += 45
+            if score != 0:
+                all_scores_zero = False
             scores.append(score)
+
+        if all_scores_zero:
+            return remaining^
 
         while len(remaining) > 0:
             var best_index = 0
@@ -1252,7 +1356,7 @@ struct Board:
                 if local_alpha >= local_beta:
                     return best_score
 
-        var moves = self.get_legal_moves()
+        var moves = self.get_legal_moves(not in_check)
         if len(moves) == 0:
             if in_check:
                 if self.current_turn:
@@ -1260,22 +1364,7 @@ struct Board:
                 return -MATE_SCORE
             return best_score
 
-        var tactical_moves = List[Move]()
-
-        for move in moves:
-            if in_check:
-                tactical_moves.append(move)
-            elif (
-                (
-                    self.board[move.to_row][move.to_column].piece != ""
-                    and self.board[move.to_row][move.to_column].type != "k"
-                )
-                or self.is_en_passant(move)
-                or move.promotion
-            ):
-                tactical_moves.append(move)
-
-        var ordered = self.order_moves(tactical_moves)
+        var ordered = self.order_moves(moves)
 
         for move in ordered:
             self._check_deadline(deadline)
@@ -1773,7 +1862,7 @@ struct Board:
             for column in range(8):
                 var piece = self.board[row][column]
 
-                if piece.piece == "":
+                if piece.kind == EMPTY:
                     empty_count += 1
                 else:
                     if empty_count > 0:

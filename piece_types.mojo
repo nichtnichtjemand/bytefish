@@ -1,0 +1,7 @@
+comptime EMPTY = UInt8(0)
+comptime PAWN = UInt8(1)
+comptime KNIGHT = UInt8(2)
+comptime BISHOP = UInt8(3)
+comptime ROOK = UInt8(4)
+comptime QUEEN = UInt8(5)
+comptime KING = UInt8(6)
