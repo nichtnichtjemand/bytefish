@@ -2,7 +2,7 @@ from board import Board
 from std.time import perf_counter
 
 
-def run_operation(board: Board, operation: Int) raises -> Int:
+def run_operation(mut board: Board, operation: Int) raises -> Int:
     if operation == 0:
         return len(board.get_legal_moves())
     if operation == 1:
@@ -23,7 +23,7 @@ def run_operation(board: Board, operation: Int) raises -> Int:
     return 0
 
 
-def measure(name: String, repeats: Int, operation: Int, board: Board) raises:
+def measure(name: String, repeats: Int, operation: Int, mut board: Board) raises:
     var warmup_result = run_operation(board, operation)
     var total = 0.0
     var best = Float64(1.0e30)

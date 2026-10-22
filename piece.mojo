@@ -43,7 +43,7 @@ struct Piece(Copyable, ImplicitlyCopyable, Movable):
         ):
             return False
 
-        var target = board.board[move.to_row][move.to_column]
+        var target = board._piece_at(move.to_row, move.to_column)
 
         if target.kind != EMPTY and target.color == self.color:
             return False
@@ -78,7 +78,7 @@ struct Piece(Copyable, ImplicitlyCopyable, Movable):
                 if move.from_row == start_row and row_diff == 2 * direction:
                     var middle_row = move.from_row + direction
 
-                    return board.board[middle_row][move.from_column].kind == EMPTY
+                    return board._piece_at(middle_row, move.from_column).kind == EMPTY
 
                 return False
 
@@ -150,7 +150,7 @@ struct Piece(Copyable, ImplicitlyCopyable, Movable):
         var column = move.from_column + col_step
 
         while row != move.to_row or column != move.to_column:
-            if board.board[row][column].kind != EMPTY:
+            if board._piece_at(row, column).kind != EMPTY:
                 return False
 
             row += row_step
@@ -158,11 +158,9 @@ struct Piece(Copyable, ImplicitlyCopyable, Movable):
 
         return True
 
-    def get_candidate_moves(
-        self, board: Board, row: Int, column: Int
-    ) raises -> List[Move]:
-        var moves = List[Move]()
-
+    def append_candidate_moves(
+        self, board: Board, row: Int, column: Int, mut moves: List[Move]
+    ) raises:
         if self.kind == KNIGHT:
             var offsets = [
                 (-2, -1),
@@ -180,7 +178,7 @@ struct Piece(Copyable, ImplicitlyCopyable, Movable):
                 var c = column + offset[1]
 
                 if self._in_bounds(r, c):
-                    var target = board.board[r][c]
+                    var target = board._piece_at(r, c)
                     if target.kind == EMPTY or target.color != self.color:
                         moves.append(self._create_move(row, column, r, c))
 
@@ -194,7 +192,7 @@ struct Piece(Copyable, ImplicitlyCopyable, Movable):
                     var c = column + dc
 
                     if self._in_bounds(r, c):
-                        var target = board.board[r][c]
+                        var target = board._piece_at(r, c)
                         if target.kind == EMPTY or target.color != self.color:
                             moves.append(self._create_move(row, column, r, c))
 
@@ -203,14 +201,14 @@ struct Piece(Copyable, ImplicitlyCopyable, Movable):
             var start_row = 6 if self.color else 1
             var r = row + direction
 
-            if self._in_bounds(r, column) and board.board[r][column].kind == EMPTY:
+            if self._in_bounds(r, column) and board._piece_at(r, column).kind == EMPTY:
                 moves.append(self._create_move(row, column, r, column))
 
                 if row == start_row:
                     var r2 = row + 2 * direction
                     if (
                         self._in_bounds(r2, column)
-                        and board.board[r2][column].kind == EMPTY
+                        and board._piece_at(r2, column).kind == EMPTY
                     ):
                         moves.append(self._create_move(row, column, r2, column))
 
@@ -219,7 +217,7 @@ struct Piece(Copyable, ImplicitlyCopyable, Movable):
                 var diag_c = column + dc
 
                 if self._in_bounds(diag_r, diag_c):
-                    var target = board.board[diag_r][diag_c]
+                    var target = board._piece_at(diag_r, diag_c)
                     var move = self._create_move(row, column, diag_r, diag_c)
                     if (
                         (target.kind != EMPTY and target.color != self.color)
@@ -253,7 +251,7 @@ struct Piece(Copyable, ImplicitlyCopyable, Movable):
                 var c = column + dc
 
                 while self._in_bounds(r, c):
-                    var target = board.board[r][c]
+                    var target = board._piece_at(r, c)
                     if target.kind != EMPTY and target.color == self.color:
                         break
 
@@ -264,8 +262,6 @@ struct Piece(Copyable, ImplicitlyCopyable, Movable):
 
                     r += dr
                     c += dc
-
-        return moves^
 
     def get_mobility(self, board: Board, row: Int, column: Int) -> Int:
         var mobility = 0
@@ -279,7 +275,7 @@ struct Piece(Copyable, ImplicitlyCopyable, Movable):
                 var target_row = row + offset[0]
                 var target_column = column + offset[1]
                 if self._in_bounds(target_row, target_column):
-                    var target = board.board[target_row][target_column]
+                    var target = board._piece_at(target_row, target_column)
                     if target.kind == EMPTY or target.color != self.color:
                         mobility += 1
         elif self.kind == KING:
@@ -290,7 +286,7 @@ struct Piece(Copyable, ImplicitlyCopyable, Movable):
                     var target_row = row + row_offset
                     var target_column = column + column_offset
                     if self._in_bounds(target_row, target_column):
-                        var target = board.board[target_row][target_column]
+                        var target = board._piece_at(target_row, target_column)
                         if target.kind == EMPTY or target.color != self.color:
                             mobility += 1
         elif self.kind == ROOK or self.kind == BISHOP or self.kind == QUEEN:
@@ -309,7 +305,7 @@ struct Piece(Copyable, ImplicitlyCopyable, Movable):
                 var target_row = row + row_step
                 var target_column = column + column_step
                 while self._in_bounds(target_row, target_column):
-                    var target = board.board[target_row][target_column]
+                    var target = board._piece_at(target_row, target_column)
                     if target.kind != EMPTY and target.color == self.color:
                         break
                     mobility += 1
@@ -326,7 +322,4 @@ struct Piece(Copyable, ImplicitlyCopyable, Movable):
     def _create_move(
         self, from_row: Int, from_column: Int, to_row: Int, to_column: Int
     ) raises -> Move:
-        var from_field = chr(ord("a") + from_column) + String(8 - from_row)
-        var to_field = chr(ord("a") + to_column) + String(8 - to_row)
-
-        return Move(from_field, to_field)
+        return Move(from_row, from_column, to_row, to_column)

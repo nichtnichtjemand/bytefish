@@ -12,7 +12,7 @@ from uci import (
 )
 
 
-def perft(board: Board, depth: Int) raises -> Int:
+def perft(mut board: Board, depth: Int) raises -> Int:
     if depth == 0:
         return 1
 

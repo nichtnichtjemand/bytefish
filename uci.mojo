@@ -83,9 +83,9 @@ def position_time_factor(
     var promotions = 0
 
     for move in moves:
-        if board.board[move.to_row][
+        if board._piece_at(move.to_row,
             move.to_column
-        ].kind != EMPTY or board.is_en_passant(move):
+        ).kind != EMPTY or board.is_en_passant(move):
             captures += 1
         if move.promotion:
             promotions += 1
@@ -142,7 +142,7 @@ def _parse_clock_value(
     return Optional(value)
 
 
-def perft(board: Board, depth: Int) raises -> Int:
+def perft(mut board: Board, depth: Int) raises -> Int:
     if depth <= 0:
         return 1
     var nodes = 0
@@ -245,7 +245,9 @@ def handle_go(
     board.search_control[3] = 0.0
     board.search_control[4] = False
     board.search_control[5] = 0
+    board.deadline_poll_count = 0
     board.search_control[6] = nodes_limit.value() if nodes_limit else 0
+    board.node_limit = nodes_limit.value() if nodes_limit else 0
     board.search_control[7] = 0
     board.search_control[8] = 0.0
 

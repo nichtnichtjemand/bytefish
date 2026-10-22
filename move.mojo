@@ -36,6 +36,24 @@ struct Move(Copyable, ImplicitlyCopyable, Movable):
             self.to_column = Int(to_bytes[0]) - 97
             self.to_row = 8 - (Int(to_bytes[1]) - 48)
 
+    def __init__(
+        out self,
+        from_row: Int,
+        from_column: Int,
+        to_row: Int,
+        to_column: Int,
+        promotion: Optional[String] = None,
+    ):
+        self.from_row = from_row
+        self.from_column = from_column
+        self.to_row = to_row
+        self.to_column = to_column
+        self.from_field = (
+            String(chr(97 + from_column)) + String(chr(56 - from_row))
+        )
+        self.to_field = String(chr(97 + to_column)) + String(chr(56 - to_row))
+        self.promotion = promotion
+
     def __str__(self) -> String:
         var promo_str = String("")
 

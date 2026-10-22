@@ -24,14 +24,25 @@ struct KingPos(Copyable, ImplicitlyCopyable, Movable):
 struct Board:
     var current_turn: Bool
     var board: List[List[Piece]]
+    # Piece bitboards use the same indexing as board[row][column]: a8 = 0,
+    # h1 = 63. Slots are white P/N/B/R/Q/K followed by black P/N/B/R/Q/K.
+    var piece_bitboards: List[UInt64]
+    var occupied_white: UInt64
+    var occupied_black: UInt64
+    var occupied_all: UInt64
+    var white_king_square: Int
+    var black_king_square: Int
     var castling_rights: String
     var en_passant_square: String
     var halfmove_clock: Int
     var fullmove_number: Int
-    var repetition_counts: List[String]
+    # Two 64-bit fingerprints per position keep repetition history compact.
+    var repetition_counts: List[UInt64]
     var last_search_score: Int
     var last_search_nodes: Int
     var last_search_gap: Int
+    var node_limit: Int
+    var deadline_poll_count: Int
     # A Python list is deliberately shared by all board copies made during
     # search. It carries UCI stop/ponder state into the recursive search.
     var search_control: PythonObject
@@ -43,14 +54,24 @@ struct Board:
     ) raises:
         self.current_turn = True
         self.board = List[List[Piece]]()
+        self.piece_bitboards = List[UInt64]()
+        for _ in range(12):
+            self.piece_bitboards.append(UInt64(0))
+        self.occupied_white = UInt64(0)
+        self.occupied_black = UInt64(0)
+        self.occupied_all = UInt64(0)
+        self.white_king_square = -1
+        self.black_king_square = -1
         self.castling_rights = "KQkq"
         self.en_passant_square = "-"
         self.halfmove_clock = 0
         self.fullmove_number = 1
-        self.repetition_counts = List[String]()
+        self.repetition_counts = List[UInt64]()
         self.last_search_score = 0
         self.last_search_nodes = 0
         self.last_search_gap = 0
+        self.node_limit = 0
+        self.deadline_poll_count = 0
         if shared_search_control:
             self.search_control = shared_search_control.value()
         else:
@@ -91,12 +112,14 @@ struct Board:
                     current_row.append(Piece(character))
             self.board.append(current_row^)
 
+        self._rebuild_bitboards()
+
         self.current_turn = True
         self.castling_rights = "KQkq"
         self.en_passant_square = "-"
         self.halfmove_clock = 0
         self.fullmove_number = 1
-        self.repetition_counts = List[String]()
+        self.repetition_counts = List[UInt64]()
         self._record_position()
 
     def copy(self) raises -> Board:
@@ -108,6 +131,13 @@ struct Board:
         for row in range(8):
             result.board.append(self.board[row].copy())
 
+        result.piece_bitboards = self.piece_bitboards.copy()
+        result.occupied_white = self.occupied_white
+        result.occupied_black = self.occupied_black
+        result.occupied_all = self.occupied_all
+        result.white_king_square = self.white_king_square
+        result.black_king_square = self.black_king_square
+
         result.current_turn = self.current_turn
         result.castling_rights = self.castling_rights
         result.en_passant_square = self.en_passant_square
@@ -117,12 +147,97 @@ struct Board:
         result.last_search_score = self.last_search_score
         result.last_search_nodes = self.last_search_nodes
         result.last_search_gap = self.last_search_gap
+        result.node_limit = self.node_limit
+        result.deadline_poll_count = self.deadline_poll_count
         result.search_control = self.search_control
 
         return result^
 
+    def _bitboard_index(self, piece: Piece) -> Int:
+        return Int(piece.color) * 6 + Int(piece.kind) - 1
+
+    def _square_mask(self, row: Int, column: Int) -> UInt64:
+        return UInt64(1) << UInt64(row * 8 + column)
+
+    # Keep the mailbox lookup as the fast path for callers that need a Piece
+    # value. Attack and occupancy queries operate directly on bitboards.
+    def _piece_at(self, row: Int, column: Int) -> Piece:
+        return self.board[row][column]
+
+    def _rebuild_bitboards(mut self):
+        self.piece_bitboards = List[UInt64]()
+        for _ in range(12):
+            self.piece_bitboards.append(UInt64(0))
+        self.occupied_white = UInt64(0)
+        self.occupied_black = UInt64(0)
+        self.occupied_all = UInt64(0)
+        self.white_king_square = -1
+        self.black_king_square = -1
+        for row in range(8):
+            for column in range(8):
+                var piece = self.board[row][column]
+                if piece.kind != EMPTY:
+                    var index = self._bitboard_index(piece)
+                    self.piece_bitboards[index] = (
+                        self.piece_bitboards[index]
+                        | self._square_mask(row, column)
+                    )
+                    if piece.color:
+                        self.occupied_white = (
+                            self.occupied_white | self._square_mask(row, column)
+                        )
+                        if piece.kind == KING and self.white_king_square < 0:
+                            self.white_king_square = row * 8 + column
+                    else:
+                        self.occupied_black = (
+                            self.occupied_black | self._square_mask(row, column)
+                        )
+                        if piece.kind == KING and self.black_king_square < 0:
+                            self.black_king_square = row * 8 + column
+        self.occupied_all = self.occupied_white | self.occupied_black
+
     def _set_square(mut self, row: Int, column: Int, piece: Piece):
+        var mask = self._square_mask(row, column)
+        var previous = self.board[row][column]
+        if previous.kind != EMPTY:
+            var previous_index = self._bitboard_index(previous)
+            self.piece_bitboards[previous_index] = (
+                self.piece_bitboards[previous_index] & ~mask
+            )
+            if previous.color:
+                self.occupied_white = self.occupied_white & ~mask
+            else:
+                self.occupied_black = self.occupied_black & ~mask
+            if previous.kind == KING:
+                if previous.color and self.white_king_square == row * 8 + column:
+                    self.white_king_square = -1
+                elif (
+                    not previous.color
+                    and self.black_king_square == row * 8 + column
+                ):
+                    self.black_king_square = -1
+        if piece.kind != EMPTY:
+            var index = self._bitboard_index(piece)
+            self.piece_bitboards[index] = self.piece_bitboards[index] | mask
+            if piece.color:
+                self.occupied_white = self.occupied_white | mask
+            else:
+                self.occupied_black = self.occupied_black | mask
+            if piece.kind == KING:
+                if piece.color:
+                    self.white_king_square = row * 8 + column
+                else:
+                    self.black_king_square = row * 8 + column
+        self.occupied_all = self.occupied_white | self.occupied_black
         self.board[row][column] = piece
+
+    def _piece_bitboard(self, kind: UInt8, color: Bool) -> UInt64:
+        return self.piece_bitboards[Int(color) * 6 + Int(kind) - 1]
+
+    def _has_piece(self, row: Int, column: Int, kind: UInt8, color: Bool) -> Bool:
+        return (
+            self._piece_bitboard(kind, color) & self._square_mask(row, column)
+        ) != UInt64(0)
 
     def _inside(self, row: Int, column: Int) -> Bool:
         return row >= 0 and row < 8 and column >= 0 and column < 8
@@ -133,16 +248,10 @@ struct Board:
         return file + rank
 
     def _find_king(self, color: Bool) -> Optional[KingPos]:
-        for row in range(8):
-            for column in range(8):
-                var piece = self.board[row][column]
-                if (
-                    piece.kind != EMPTY
-                    and piece.kind == KING
-                    and piece.color == color
-                ):
-                    return Optional(KingPos(row, column))
-        return None
+        var square = self.white_king_square if color else self.black_king_square
+        if square < 0:
+            return None
+        return Optional(KingPos(square // 8, square % 8))
 
     def _ray_attacked(
         self,
@@ -156,15 +265,17 @@ struct Board:
         var scan_row = row + row_step
         var scan_column = column + column_step
         while self._inside(scan_row, scan_column):
-            var piece = self.board[scan_row][scan_column]
-            if piece.kind != EMPTY:
-                if piece.color == by_color:
-                    if piece.kind == QUEEN:
-                        return True
-                    if diagonal and piece.kind == BISHOP:
-                        return True
-                    if not diagonal and piece.kind == ROOK:
-                        return True
+            if self._is_occupied(scan_row, scan_column):
+                if self._has_piece(scan_row, scan_column, QUEEN, by_color):
+                    return True
+                if diagonal and self._has_piece(
+                    scan_row, scan_column, BISHOP, by_color
+                ):
+                    return True
+                if not diagonal and self._has_piece(
+                    scan_row, scan_column, ROOK, by_color
+                ):
+                    return True
                 return False
             scan_row += row_step
             scan_column += column_step
@@ -178,12 +289,10 @@ struct Board:
         if not by_color:
             pawn_row = row - 1
         if self._inside(pawn_row, column - 1):
-            var pawn = self.board[pawn_row][column - 1]
-            if pawn.kind != EMPTY and pawn.color == by_color and pawn.kind == PAWN:
+            if self._has_piece(pawn_row, column - 1, PAWN, by_color):
                 return True
         if self._inside(pawn_row, column + 1):
-            var pawn = self.board[pawn_row][column + 1]
-            if pawn.kind != EMPTY and pawn.color == by_color and pawn.kind == PAWN:
+            if self._has_piece(pawn_row, column + 1, PAWN, by_color):
                 return True
 
         for row_offset in range(-2, 3):
@@ -193,11 +302,8 @@ struct Board:
                 var source_row = row + row_offset
                 var source_column = column + column_offset
                 if self._inside(source_row, source_column):
-                    var attacker = self.board[source_row][source_column]
-                    if (
-                        attacker.kind != EMPTY
-                        and attacker.color == by_color
-                        and attacker.kind == KNIGHT
+                    if self._has_piece(
+                        source_row, source_column, KNIGHT, by_color
                     ):
                         return True
 
@@ -208,11 +314,8 @@ struct Board:
                 var source_row = row + row_offset
                 var source_column = column + column_offset
                 if self._inside(source_row, source_column):
-                    var attacker = self.board[source_row][source_column]
-                    if (
-                        attacker.kind != EMPTY
-                        and attacker.color == by_color
-                        and attacker.kind == KING
+                    if self._has_piece(
+                        source_row, source_column, KING, by_color
                     ):
                         return True
 
@@ -251,13 +354,16 @@ struct Board:
         var column = from_column + column_step
 
         while row != to_row or column != to_column:
-            if self.board[row][column].kind != EMPTY:
+            if self._is_occupied(row, column):
                 return False
 
             row += row_step
             column += column_step
 
         return True
+
+    def _is_occupied(self, row: Int, column: Int) -> Bool:
+        return (self.occupied_all & self._square_mask(row, column)) != UInt64(0)
 
     def is_in_check(self, color: Bool) -> Bool:
         var king = self._find_king(color)
@@ -289,7 +395,7 @@ struct Board:
         var scan_row = king_row + row_step
         var scan_column = king_column + column_step
         while scan_row != row or scan_column != column:
-            if self.board[scan_row][scan_column].kind != EMPTY:
+            if self._piece_at(scan_row, scan_column).kind != EMPTY:
                 return False
             scan_row += row_step
             scan_column += column_step
@@ -297,7 +403,7 @@ struct Board:
         scan_row += row_step
         scan_column += column_step
         while self._inside(scan_row, scan_column):
-            var attacker = self.board[scan_row][scan_column]
+            var attacker = self._piece_at(scan_row, scan_column)
             if attacker.kind != EMPTY:
                 if attacker.color == color:
                     return False
@@ -318,17 +424,17 @@ struct Board:
         if move.to_field != self.en_passant_square:
             return False
 
-        var piece = self.board[move.from_row][move.from_column]
+        var piece = self._piece_at(move.from_row, move.from_column)
         if piece.kind == EMPTY or piece.kind != PAWN:
             return False
 
         return (
             move.from_column != move.to_column
-            and self.board[move.to_row][move.to_column].kind == EMPTY
+            and self._piece_at(move.to_row, move.to_column).kind == EMPTY
         )
 
     def _can_castle(self, move: Move) -> Bool:
-        var piece = self.board[move.from_row][move.from_column]
+        var piece = self._piece_at(move.from_row, move.from_column)
 
         if piece.kind == EMPTY or piece.kind != KING:
             return False
@@ -345,8 +451,8 @@ struct Board:
                     return False
 
             if (
-                self.board[move.from_row][5].kind != EMPTY
-                or self.board[move.from_row][6].kind != EMPTY
+                self._piece_at(move.from_row, 5).kind != EMPTY
+                or self._piece_at(move.from_row, 6).kind != EMPTY
             ):
                 return False
 
@@ -370,9 +476,9 @@ struct Board:
                     return False
 
             if (
-                self.board[move.from_row][1].kind != EMPTY
-                or self.board[move.from_row][2].kind != EMPTY
-                or self.board[move.from_row][3].kind != EMPTY
+                self._piece_at(move.from_row, 1).kind != EMPTY
+                or self._piece_at(move.from_row, 2).kind != EMPTY
+                or self._piece_at(move.from_row, 3).kind != EMPTY
             ):
                 return False
 
@@ -388,6 +494,57 @@ struct Board:
             return True
 
         return False
+
+    # Test king safety in place. Legal-move generation calls this for king
+    # moves, checks, pins, and en-passant moves; cloning a whole Board there
+    # also copies search and repetition state that this check never needs.
+    def _move_is_king_safe(mut self, move: Move) -> Bool:
+        var moving_piece = self._piece_at(move.from_row, move.from_column)
+        var target_piece = self._piece_at(move.to_row, move.to_column)
+        var en_passant = self.is_en_passant(move)
+        var captured_row = move.to_row
+        if en_passant:
+            captured_row = move.to_row + 1
+            if not moving_piece.color:
+                captured_row = move.to_row - 1
+        var captured_piece = self._piece_at(captured_row, move.to_column)
+
+        var placed_piece = moving_piece
+        if moving_piece.kind == PAWN and (
+            move.to_row == 0 or move.to_row == 7
+        ):
+            var promotion = String("q")
+            if move.promotion:
+                promotion = move.promotion.value()
+            if moving_piece.color:
+                promotion = promotion.upper()
+            placed_piece = Piece(promotion)
+
+        self._set_square(move.to_row, move.to_column, placed_piece)
+        self._set_square(move.from_row, move.from_column, Piece(""))
+        if en_passant:
+            self._set_square(captured_row, move.to_column, Piece(""))
+
+        var rook_from = -1
+        var rook_to = -1
+        if moving_piece.kind == KING and abs(move.to_column - move.from_column) == 2:
+            rook_from = 7 if move.to_column == 6 else 0
+            rook_to = 5 if move.to_column == 6 else 3
+            var rook = self._piece_at(move.from_row, rook_from)
+            self._set_square(move.from_row, rook_to, rook)
+            self._set_square(move.from_row, rook_from, Piece(""))
+
+        var safe = not self.is_in_check(self.current_turn)
+
+        if rook_from >= 0:
+            var rook = self._piece_at(move.from_row, rook_to)
+            self._set_square(move.from_row, rook_from, rook)
+            self._set_square(move.from_row, rook_to, Piece(""))
+        if en_passant:
+            self._set_square(captured_row, move.to_column, captured_piece)
+        self._set_square(move.from_row, move.from_column, moving_piece)
+        self._set_square(move.to_row, move.to_column, target_piece)
+        return safe
 
     def _remove_castling_rights(mut self, piece: Piece) raises:
         if piece.kind == KING and piece.color:
@@ -466,7 +623,7 @@ struct Board:
             or is_capture
             or self.castling_rights != previous_castling_rights
         ):
-            self.repetition_counts = List[String]()
+            self.repetition_counts = List[UInt64]()
         self._record_position()
 
     def move(mut self, move: Move) raises -> Bool:
@@ -475,8 +632,8 @@ struct Board:
         ) or not self._inside(move.to_row, move.to_column):
             return False
 
-        var from_piece = self.board[move.from_row][move.from_column]
-        var to_piece = self.board[move.to_row][move.to_column]
+        var from_piece = self._piece_at(move.from_row, move.from_column)
+        var to_piece = self._piece_at(move.to_row, move.to_column)
 
         if from_piece.kind == EMPTY or from_piece.color != self.current_turn:
             return False
@@ -517,11 +674,11 @@ struct Board:
             or move.from_column - move.to_column == 2
         ):
             if move.to_column == 6:
-                var rook = Piece(self.board[move.from_row][7].piece)
+                var rook = Piece(self._piece_at(move.from_row, 7).piece)
                 self._set_square(move.from_row, 5, rook)
                 self._set_square(move.from_row, 7, Piece(""))
             else:
-                var rook = Piece(self.board[move.from_row][0].piece)
+                var rook = Piece(self._piece_at(move.from_row, 0).piece)
                 self._set_square(move.from_row, 3, rook)
                 self._set_square(move.from_row, 0, Piece(""))
 
@@ -550,9 +707,12 @@ struct Board:
         return True
 
     def get_legal_moves(
-        self, captures_only: Bool = False
+        mut self, captures_only: Bool = False
     ) raises -> List[Move]:
         var result = List[Move]()
+        var candidates = List[Move]()
+        var needs_king_safety = UInt64(0)
+
         var king = self._find_king(self.current_turn)
         var in_check = True
         if king:
@@ -560,15 +720,9 @@ struct Board:
             in_check = self.is_square_attacked(
                 king_position.row, king_position.column, not self.current_turn
             )
-        var promotion_types = List[String]()
-        promotion_types.append("q")
-        promotion_types.append("r")
-        promotion_types.append("b")
-        promotion_types.append("n")
-
         for row in range(8):
             for column in range(8):
-                var piece = self.board[row][column]
+                var piece = self._piece_at(row, column)
 
                 if piece.kind == EMPTY or piece.color != self.current_turn:
                     continue
@@ -581,58 +735,11 @@ struct Board:
                         piece.color,
                     )
 
-                var candidates = piece.get_candidate_moves(self, row, column)
-
-                for candidate in candidates:
-                    if captures_only:
-                        var target = self.board[candidate.to_row][candidate.to_column]
-                        var promotion = piece.kind == PAWN and (
-                            candidate.to_row == 0 or candidate.to_row == 7
-                        )
-                        var capture = (
-                            target.kind != EMPTY and target.kind != KING
-                        ) or self.is_en_passant(candidate)
-                        if not capture and not promotion:
-                            continue
-
-                    if piece.kind == PAWN and (
-                        candidate.to_row == 0 or candidate.to_row == 7
-                    ):
-                        for promotion in promotion_types:
-                            var promoted_move = Move(
-                                candidate.from_field,
-                                candidate.to_field,
-                                Optional(promotion),
-                            )
-                            var validate = must_test_king_safety
-                            if not validate and self.is_en_passant(promoted_move):
-                                validate = True
-                            if validate:
-                                var promoted_child = self.copy()
-                                if promoted_child._apply_unchecked(promoted_move):
-                                    if not promoted_child.is_in_check(
-                                        self.current_turn
-                                    ):
-                                        result.append(promoted_move)
-                            else:
-                                result.append(promoted_move)
-                    else:
-                        var validate = must_test_king_safety
-                        if (
-                            not validate
-                            and piece.kind == PAWN
-                            and candidate.from_column != candidate.to_column
-                            and self.board[candidate.to_row][candidate.to_column].kind == EMPTY
-                            and self.is_en_passant(candidate)
-                        ):
-                            validate = True
-                        if validate:
-                            var child = self.copy()
-                            if child._apply_unchecked(candidate):
-                                if not child.is_in_check(self.current_turn):
-                                    result.append(candidate)
-                        else:
-                            result.append(candidate)
+                if must_test_king_safety:
+                    needs_king_safety = needs_king_safety | self._square_mask(
+                        row, column
+                    )
+                piece.append_candidate_moves(self, row, column, candidates)
 
                 if piece.kind == KING and not captures_only:
                     var kingside = Move(
@@ -649,6 +756,58 @@ struct Board:
                     if self._can_castle(queenside):
                         result.append(queenside)
 
+        var promotion_types = List[String]()
+        promotion_types.append("q")
+        promotion_types.append("r")
+        promotion_types.append("b")
+        promotion_types.append("n")
+        for candidate in candidates:
+            var piece = self._piece_at(candidate.from_row, candidate.from_column)
+            var from_mask = self._square_mask(
+                candidate.from_row, candidate.from_column
+            )
+            var must_test_king_safety = (
+                needs_king_safety & from_mask
+            ) != UInt64(0)
+
+            if captures_only:
+                var target = self._piece_at(candidate.to_row, candidate.to_column)
+                var promotion = piece.kind == PAWN and (
+                    candidate.to_row == 0 or candidate.to_row == 7
+                )
+                var capture = (
+                    target.kind != EMPTY and target.kind != KING
+                ) or self.is_en_passant(candidate)
+                if not capture and not promotion:
+                    continue
+
+            if piece.kind == PAWN and (
+                candidate.to_row == 0 or candidate.to_row == 7
+            ):
+                for promotion in promotion_types:
+                    var promoted_move = Move(
+                        candidate.from_field,
+                        candidate.to_field,
+                        Optional(promotion),
+                    )
+                    var validate = must_test_king_safety
+                    if not validate and self.is_en_passant(promoted_move):
+                        validate = True
+                    if not validate or self._move_is_king_safe(promoted_move):
+                        result.append(promoted_move)
+            else:
+                var validate = must_test_king_safety
+                if (
+                    not validate
+                    and piece.kind == PAWN
+                    and candidate.from_column != candidate.to_column
+                    and self._piece_at(candidate.to_row, candidate.to_column).kind == EMPTY
+                    and self.is_en_passant(candidate)
+                ):
+                    validate = True
+                if not validate or self._move_is_king_safe(candidate):
+                    result.append(candidate)
+
         return result^
 
     def _apply_unchecked(mut self, move: Move) raises -> Bool:
@@ -657,7 +816,7 @@ struct Board:
         ) or not self._inside(move.to_row, move.to_column):
             return False
 
-        var piece = self.board[move.from_row][move.from_column]
+        var piece = self._piece_at(move.from_row, move.from_column)
         if piece.kind == EMPTY:
             return False
 
@@ -674,7 +833,7 @@ struct Board:
             ):
                 return False
 
-        var target = self.board[move.to_row][move.to_column]
+        var target = self._piece_at(move.to_row, move.to_column)
         var capture = target.kind != EMPTY
         var ep = self.is_en_passant(move)
 
@@ -693,11 +852,11 @@ struct Board:
             or move.from_column - move.to_column == 2
         ):
             if move.to_column == 6:
-                var rook = Piece(self.board[move.from_row][7].piece)
+                var rook = Piece(self._piece_at(move.from_row, 7).piece)
                 self._set_square(move.from_row, 5, rook)
                 self._set_square(move.from_row, 7, Piece(""))
             else:
-                var rook = Piece(self.board[move.from_row][0].piece)
+                var rook = Piece(self._piece_at(move.from_row, 0).piece)
                 self._set_square(move.from_row, 3, rook)
                 self._set_square(move.from_row, 0, Piece(""))
 
@@ -716,7 +875,7 @@ struct Board:
 
         for row in range(8):
             for column in range(8):
-                var piece = self.board[row][column]
+                var piece = self._piece_at(row, column)
                 if piece.kind == EMPTY:
                     continue
 
@@ -734,7 +893,7 @@ struct Board:
 
         for row in range(8):
             for column in range(8):
-                var piece = self.board[row][column]
+                var piece = self._piece_at(row, column)
                 if piece.kind == EMPTY:
                     continue
 
@@ -761,7 +920,7 @@ struct Board:
 
         for row in range(8):
             for column in range(8):
-                var piece = self.board[row][column]
+                var piece = self._piece_at(row, column)
                 if piece.kind == EMPTY:
                     continue
 
@@ -805,7 +964,7 @@ struct Board:
         var count = 0
         for row in range(8):
             for column in range(8):
-                if self.board[row][column].kind != EMPTY:
+                if self._piece_at(row, column).kind != EMPTY:
                     count += 1
         return count
 
@@ -814,7 +973,7 @@ struct Board:
         var pieces = 0
         for row in range(8):
             for column in range(8):
-                var piece = self.board[row][column]
+                var piece = self._piece_at(row, column)
                 if piece.kind != EMPTY:
                     pieces += 1
                     if piece.kind == QUEEN:
@@ -831,7 +990,7 @@ struct Board:
 
         for row in range(8):
             for column in range(8):
-                var piece = self.board[row][column]
+                var piece = self._piece_at(row, column)
                 if piece.kind == EMPTY or piece.kind == KING:
                     continue
                 if piece.kind == PAWN or piece.kind == ROOK or piece.kind == QUEEN:
@@ -882,7 +1041,7 @@ struct Board:
                 if not self._inside(scan_row, scan_column):
                     continue
 
-                var piece = self.board[scan_row][scan_column]
+                var piece = self._piece_at(scan_row, scan_column)
                 if (
                     piece.kind != EMPTY
                     and piece.kind == PAWN
@@ -908,7 +1067,7 @@ struct Board:
 
         for row in range(8):
             for column in range(8):
-                var piece = self.board[row][column]
+                var piece = self._piece_at(row, column)
                 if piece.kind == EMPTY:
                     continue
 
@@ -940,7 +1099,7 @@ struct Board:
                         score += sign * max(0, 24 - king_distance * 4)
                 elif piece.kind == ROOK:
                     for pawn_row in range(8):
-                        var pawn = self.board[pawn_row][column]
+                        var pawn = self._piece_at(pawn_row, column)
                         if (
                             pawn.kind == EMPTY
                             or pawn.kind != PAWN
@@ -962,7 +1121,7 @@ struct Board:
                                 step = -1
                             var scan_row = pawn_row + step
                             while scan_row != row:
-                                if self.board[scan_row][column].kind != EMPTY:
+                                if self._piece_at(scan_row, column).kind != EMPTY:
                                     path_clear = False
                                     break
                                 scan_row += step
@@ -977,7 +1136,7 @@ struct Board:
 
         for row in range(8):
             for column in range(8):
-                var piece = self.board[row][column]
+                var piece = self._piece_at(row, column)
                 if piece.kind == EMPTY or piece.kind == KING:
                     continue
 
@@ -1016,7 +1175,7 @@ struct Board:
 
         for row in range(8):
             for column in range(8):
-                var piece = self.board[row][column]
+                var piece = self._piece_at(row, column)
                 if piece.kind != EMPTY and piece.kind == PAWN:
                     if piece.color:
                         white_pawns_by_file[column] += 1
@@ -1055,7 +1214,7 @@ struct Board:
 
         for row in range(8):
             for column in range(8):
-                var piece = self.board[row][column]
+                var piece = self._piece_at(row, column)
                 if piece.kind == EMPTY:
                     continue
 
@@ -1083,7 +1242,7 @@ struct Board:
         var black_king: Optional[KingPos] = None
         for row in range(8):
             for column in range(8):
-                var piece = self.board[row][column]
+                var piece = self._piece_at(row, column)
                 if piece.kind == EMPTY:
                     continue
                 if piece.kind == QUEEN:
@@ -1115,7 +1274,7 @@ struct Board:
                 var pawn_row = row - 1 if color else row + 1
 
                 if self._inside(pawn_row, pawn_column):
-                    var pawn = self.board[pawn_row][pawn_column]
+                    var pawn = self._piece_at(pawn_row, pawn_column)
                     if (
                         pawn.kind != EMPTY
                         and pawn.kind == PAWN
@@ -1140,52 +1299,64 @@ struct Board:
             + self.get_king_safety_score()
         )
 
-    def _position_key(self) -> String:
-        var result = String("")
-        for row in range(8):
-            var empty_count = 0
-            for column in range(8):
-                var piece = self.board[row][column]
-                if piece.kind == EMPTY:
-                    empty_count += 1
-                else:
-                    if empty_count > 0:
-                        result += String(empty_count)
-                        empty_count = 0
-                    result += piece.piece
-            if empty_count > 0:
-                result += String(empty_count)
-            if row < 7:
-                result += "/"
-
-        result += " "
-        if self.current_turn:
-            result += "w"
-        else:
-            result += "b"
-        result += " " + self.castling_rights + " " + self.en_passant_square
-        return result
-
     def _record_position(mut self) raises:
-        var key = self._position_key()
-        self.repetition_counts.append(key)
+        var hash_a = UInt64(1469598103934665603)
+        var hash_b = UInt64(2654435761)
+        for index in range(12):
+            var feature = self.piece_bitboards[index] ^ UInt64(index + 1)
+            hash_a = (hash_a ^ feature) * UInt64(1099511628211)
+            hash_b = (hash_b ^ (feature + UInt64(0x9E3779B9))) * UInt64(16777619)
+
+        var rights = UInt64(0)
+        if "K" in self.castling_rights:
+            rights = rights | UInt64(1)
+        if "Q" in self.castling_rights:
+            rights = rights | UInt64(2)
+        if "k" in self.castling_rights:
+            rights = rights | UInt64(4)
+        if "q" in self.castling_rights:
+            rights = rights | UInt64(8)
+        var ep_square = UInt64(64)
+        if self.en_passant_square != "-":
+            var ep_bytes = self.en_passant_square.as_bytes()
+            var ep_column = Int(ep_bytes[0]) - 97
+            var ep_row = 8 - (Int(ep_bytes[1]) - 48)
+            ep_square = UInt64(ep_row * 8 + ep_column)
+
+        var metadata = rights | (ep_square << 8)
+        if self.current_turn:
+            metadata = metadata | (UInt64(1) << 16)
+        hash_a = (hash_a ^ metadata) * UInt64(1099511628211)
+        hash_b = (hash_b ^ (metadata + UInt64(0x9E3779B9))) * UInt64(16777619)
+        self.repetition_counts.append(hash_a)
+        self.repetition_counts.append(hash_b)
 
     def is_threefold_repetition(self) -> Bool:
         if len(self.repetition_counts) == 0:
             return False
 
-        var current = self.repetition_counts[len(self.repetition_counts) - 1]
+        var signature_width = 2
+        var current_start = len(self.repetition_counts) - signature_width
         var count = 0
-
-        for key in self.repetition_counts:
-            if key == current:
+        var position_start = 0
+        while position_start <= current_start:
+            var matches = True
+            for field in range(signature_width):
+                if (
+                    self.repetition_counts[position_start + field]
+                    != self.repetition_counts[current_start + field]
+                ):
+                    matches = False
+                    break
+            if matches:
                 count += 1
                 if count == 3:
                     return True
+            position_start += signature_width
 
         return False
 
-    def is_checkmate(self, color: Bool) raises -> Bool:
+    def is_checkmate(mut self, color: Bool) raises -> Bool:
         if not self.is_in_check(color):
             return False
 
@@ -1196,7 +1367,7 @@ struct Board:
         child.current_turn = color
         return len(child.get_legal_moves()) == 0
 
-    def is_stalemate(self) raises -> Bool:
+    def is_stalemate(mut self) raises -> Bool:
         if self.is_in_check(self.current_turn):
             return False
         return len(self.get_legal_moves()) == 0
@@ -1216,6 +1387,32 @@ struct Board:
         self.last_search_nodes += tested_moves
         return None
 
+    def _sift_move_heap(
+        self,
+        mut moves: List[Move],
+        mut scores: List[Int],
+        heap_size: Int,
+        root: Int,
+    ):
+        var parent = root
+        while True:
+            var largest = parent
+            var left = parent * 2 + 1
+            var right = left + 1
+            if left < heap_size and scores[left] > scores[largest]:
+                largest = left
+            if right < heap_size and scores[right] > scores[largest]:
+                largest = right
+            if largest == parent:
+                break
+            var move_tmp = moves[parent]
+            moves[parent] = moves[largest]
+            moves[largest] = move_tmp
+            var score_tmp = scores[parent]
+            scores[parent] = scores[largest]
+            scores[largest] = score_tmp
+            parent = largest
+
     def order_moves(self, moves: List[Move]) raises -> List[Move]:
         var ordered = List[Move]()
         var remaining = moves.copy()
@@ -1228,8 +1425,8 @@ struct Board:
         # time it compared a move with the remaining list.
         for move in remaining:
             var score = 0
-            var target = self.board[move.to_row][move.to_column]
-            var moving_piece = self.board[move.from_row][move.from_column]
+            var target = self._piece_at(move.to_row, move.to_column)
+            var moving_piece = self._piece_at(move.from_row, move.from_column)
 
             if target.kind != EMPTY:
                 var victim_value = 0
@@ -1291,19 +1488,21 @@ struct Board:
         if all_scores_zero:
             return remaining^
 
-        while len(remaining) > 0:
-            var best_index = 0
-            var best_score = -INF
+        var heap_size = len(remaining)
+        var start = heap_size // 2
+        while start > 0:
+            start -= 1
+            self._sift_move_heap(remaining, scores, heap_size, start)
 
-            for index in range(len(remaining)):
-                var score = scores[index]
-                if score > best_score:
-                    best_score = score
-                    best_index = index
-
-            ordered.append(remaining[best_index])
-            _ = remaining.pop(best_index)
-            _ = scores.pop(best_index)
+        while heap_size > 0:
+            ordered.append(remaining[0])
+            heap_size -= 1
+            if heap_size > 0:
+                remaining[0] = remaining[heap_size]
+                scores[0] = scores[heap_size]
+                _ = remaining.pop()
+                _ = scores.pop()
+                self._sift_move_heap(remaining, scores, heap_size, 0)
 
         return ordered^
 
@@ -1367,8 +1566,6 @@ struct Board:
         var ordered = self.order_moves(moves)
 
         for move in ordered:
-            self._check_deadline(deadline)
-
             var child = self.copy()
             child.last_search_nodes = 0
             if not child._apply_unchecked(move):
@@ -1377,6 +1574,7 @@ struct Board:
             var score = child.quiescence(
                 local_alpha, local_beta, deadline, remaining_depth - 1
             )
+            self.deadline_poll_count = child.deadline_poll_count
             self.last_search_nodes += child.last_search_nodes
 
             if self.current_turn:
@@ -1403,13 +1601,13 @@ struct Board:
         beta: Int = INF,
         deadline: Optional[Float64] = None,
     ) raises -> Int:
-        self._check_deadline(deadline)
-
         # Quiescence already checks repetition, move-count draws and
         # insufficient material, so send horizon nodes there before doing
         # those same tests twice.
         if depth <= 0:
             return self.quiescence(alpha, beta, deadline)
+
+        self._check_deadline(deadline)
 
         self.last_search_nodes = 1
         self._count_search_node()
@@ -1445,7 +1643,6 @@ struct Board:
             best_score = INF
 
             for move in ordered:
-                self._check_deadline(deadline)
                 var child = self.copy()
                 child.last_search_nodes = 0
 
@@ -1455,6 +1652,7 @@ struct Board:
                 var score = child.minimax(
                     depth - 1, local_alpha, local_beta, deadline
                 )
+                self.deadline_poll_count = child.deadline_poll_count
                 self.last_search_nodes += child.last_search_nodes
 
                 if score < best_score:
@@ -1469,7 +1667,6 @@ struct Board:
             best_score = -INF
 
             for move in ordered:
-                self._check_deadline(deadline)
                 var child = self.copy()
                 child.last_search_nodes = 0
 
@@ -1479,6 +1676,7 @@ struct Board:
                 var score = child.minimax(
                     depth - 1, local_alpha, local_beta, deadline
                 )
+                self.deadline_poll_count = child.deadline_poll_count
                 self.last_search_nodes += child.last_search_nodes
 
                 if score > best_score:
@@ -1564,8 +1762,6 @@ struct Board:
             second_best_score = -INF
 
         for move in ordered:
-            self._check_deadline(deadline)
-
             var child = self.copy()
             child.last_search_nodes = 0
             if not child._apply_unchecked(move):
@@ -1574,6 +1770,7 @@ struct Board:
             var score = child.minimax(
                 depth - 1, local_alpha, local_beta, deadline
             )
+            self.deadline_poll_count = child.deadline_poll_count
             self.last_search_nodes += child.last_search_nodes
 
             if self.current_turn:
@@ -1744,13 +1941,12 @@ struct Board:
             return Optional(child_move)
         return parent_result
 
-    def _check_deadline(self, deadline: Optional[Float64]) raises:
+    def _check_deadline(mut self, deadline: Optional[Float64]) raises:
         # Poll stdin from inside search so UCI's synchronous outer loop still
         # reacts promptly to stop, ponderhit, quit, and isready.
-        var poll_count = Int(String(py=self.search_control[5])) + 1
-        self.search_control[5] = poll_count
-        if poll_count >= 256:
-            self.search_control[5] = 0
+        self.deadline_poll_count += 1
+        if self.deadline_poll_count >= 256:
+            self.deadline_poll_count = 0
             var select = Python.import_module("select")
             var sys = Python.import_module("sys")
             var ready = select.select([sys.stdin], [], [], 0.0)
@@ -1778,23 +1974,22 @@ struct Board:
                     self.search_control[4] = True
                 elif incoming == "isready":
                     print("readyok")
-        if String(py=self.search_control[0]) == "True":
-            raise Error("Search stopped")
-        if self.search_control[2] is not None:
-            var active_deadline = Float64(String(py=self.search_control[2]))
-            if Float64(monotonic()) / 1_000_000_000.0 >= active_deadline:
-                raise Error("Search deadline reached")
-        if deadline:
-            if Float64(monotonic()) / 1_000_000_000.0 >= deadline.value():
-                raise Error("Search deadline reached")
+            if String(py=self.search_control[0]) == "True":
+                raise Error("Search stopped")
+            if self.search_control[2] is not None:
+                var active_deadline = Float64(String(py=self.search_control[2]))
+                if Float64(monotonic()) / 1_000_000_000.0 >= active_deadline:
+                    raise Error("Search deadline reached")
+            if deadline:
+                if Float64(monotonic()) / 1_000_000_000.0 >= deadline.value():
+                    raise Error("Search deadline reached")
 
     def _count_search_node(mut self) raises:
-        var limit = Int(String(py=self.search_control[6]))
-        if limit <= 0:
+        if self.node_limit <= 0:
             return
         var searched = Int(String(py=self.search_control[7])) + 1
         self.search_control[7] = searched
-        if searched > limit:
+        if searched > self.node_limit:
             raise Error("Search node limit reached")
 
     def load_fen(mut self, fen: String) raises:
@@ -1845,12 +2040,13 @@ struct Board:
             raise Error("Invalid FEN active color")
 
         self.board = new_board^
+        self._rebuild_bitboards()
         self.current_turn = active_color == "w"
         self.castling_rights = String(parts[2])
         self.en_passant_square = String(parts[3])
         self.halfmove_clock = Int(String(parts[4]))
         self.fullmove_number = Int(String(parts[5]))
-        self.repetition_counts = List[String]()
+        self.repetition_counts = List[UInt64]()
         self._record_position()
 
     def to_fen(self) -> String:
@@ -1860,7 +2056,7 @@ struct Board:
             var empty_count = 0
 
             for column in range(8):
-                var piece = self.board[row][column]
+                var piece = self._piece_at(row, column)
 
                 if piece.kind == EMPTY:
                     empty_count += 1
