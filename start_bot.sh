@@ -1,8 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Ermittelt das Verzeichnis, in dem dieses Skript liegt
+
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
-# Führt direkt die Mojo-Datei aus
-exec mojo "$SCRIPT_DIR/uci.mojo"
+
+while true; do
+    echo "Start Bytefish..."
+    
+
+    mojo "$SCRIPT_DIR/uci.mojo"
+    
+    echo "Bytefish exited. Restarting in 2 seconds..."
+    sleep 2
+done
+
