@@ -4,6 +4,6 @@ __pycache__/
 .pytest_cache/
 .agents/
 .codex/
-bytefish/
+bytefish
 .aws/
 .venv/
