@@ -1,0 +1,368 @@
+/* ==========================================================================
+   1. RESET, CSS VARIABLES & TOKENS
+   ========================================================================== */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+
+
+:root {
+    /* Deine 5-Farben-Palette */
+    --color-dark-plum: #22223b;
+    --color-slate-blue: #4a4e69;
+    --color-mauve-taupe: #9a8c98;
+    --color-rose-tint: #c9ada7;
+    --color-almond-soft: #f2e9e4;
+
+    /* Semantische Zuweisung */
+    --bg-main: var(--color-mauve-taupe);
+    --bg-surface: var(--color-almond-soft);
+    --text-main: var(--color-dark-plum);
+    --text-muted: var(--color-slate-blue);
+    /* Geändert auf Slate für besseren Kontrast auf Mauve */
+
+    /* Alpha-Layer (Echte, lesbare Kontraste) */
+    --layer-header: rgba(34, 34, 59, 0.95);
+    /* Dunkler Header-Grund */
+    --layer-border-dark: rgba(74, 78, 105, 0.4);
+    --layer-border-light: rgba(74, 78, 105, 0.2);
+    --layer-card-bg: rgba(242, 233, 228, 0.12);
+    --layer-table-th: rgba(74, 78, 105, 0.15);
+    --layer-table-hover: rgba(242, 233, 228, 0.08);
+    --layer-code-bg: rgba(34, 34, 59, 0.7);
+
+    /* Layout */
+    --max-width: 1100px;
+    --transition-fast: 180ms ease;
+    --transition-smooth: 200ms ease;
+    --transition-slide: 250ms ease;
+}
+
+html {
+    scroll-behavior: smooth;
+}
+
+/* ==========================================================================
+   2. GLOBAL TYPOGRAPHY & BODY
+   ========================================================================== */
+body {
+    font-family: "Inter", sans-serif;
+    font-size: 16px;
+    line-height: 1.7;
+    font-weight: 400;
+    letter-spacing: -0.02em;
+    background-color: var(--bg-main);
+    color: var(--text-main);
+}
+
+h1,
+h2,
+h3 {
+    font-family: "Space Grotesk", sans-serif;
+    font-weight: 700;
+    line-height: 1.15;
+    letter-spacing: -0.04em;
+    color: var(--text-main);
+    margin-bottom: 0.5em;
+}
+
+h1 {
+    font-size: clamp(3rem, 8vw, 5.5rem);
+    letter-spacing: -0.05em;
+}
+
+h2 {
+    font-size: clamp(1.8rem, 4vw, 2.5rem);
+    margin-top: 1.5em;
+}
+
+h3 {
+    font-size: 1.3rem;
+    margin-top: 1.2em;
+}
+
+p.p1 {
+    max-width: 70ch;
+    color: var(--text-main);
+    opacity: 0.85;
+    /* Leicht sanfter, ohne unleserlich zu werden */
+    margin-bottom: 1.5em;
+}
+
+ul {
+    list-style-position: inside;
+    margin-bottom: 1.5em;
+    color: var(--text-main);
+}
+
+ul li {
+    margin-bottom: 0.5em;
+}
+
+ul li strong {
+    color: var(--color-dark-plum);
+}
+
+a {
+    color: var(--text-main);
+    text-decoration: none;
+    transition: color var(--transition-fast);
+}
+
+.skip-link {
+    position: absolute;
+    top: -100px;
+    left: 16px;
+    z-index: 1000;
+    padding: 12px 16px;
+    background: var(--color-dark-plum);
+    color: var(--color-almond-soft);
+    border-radius: 8px;
+    font-weight: 600;
+}
+
+.skip-link:focus {
+    top: 16px;
+}
+
+/* ==========================================================================
+   3. LAYOUT STRUCTURE
+   ========================================================================== */
+#main {
+    max-width: var(--max-width);
+    margin: 0 auto;
+    padding: 0 24px;
+}
+
+section {
+    padding: 80px 0;
+    border-bottom: 1px solid var(--layer-border-light);
+    scroll-margin-top: 80px;
+}
+
+section:last-of-type {
+    border-bottom: none;
+}
+
+/* ==========================================================================
+   4. NAVIGATION (HEADER)
+   ========================================================================== */
+#header {
+    position: sticky;
+    top: 0;
+    left: 0;
+    width: 100%;
+    z-index: 100;
+    background-color: var(--layer-header);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--layer-border-dark);
+}
+
+#header nav {
+    max-width: var(--max-width);
+    margin: 0 auto;
+    padding: 18px 24px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+#header .logo {
+    font-family: "Space Grotesk", sans-serif;
+    font-size: 1.4rem;
+    font-weight: 700;
+    letter-spacing: -0.04em;
+    color: var(--color-almond-soft);
+}
+
+/* FIX: Überschreibt das globale margin-bottom von ul-Elementen im Header */
+#header ul {
+    display: flex;
+    gap: 32px;
+    list-style: none;
+    margin-bottom: 0;
+}
+
+/* FIX: Textfarbe im dunklen Header auf die helle Kontrastfarbe geändert */
+#header ul a {
+    font-size: 0.95rem;
+    font-weight: 500;
+    color: var(--color-rose-tint);
+    position: relative;
+    padding: 4px 0;
+}
+
+#header ul a:hover {
+    color: var(--color-almond-soft);
+}
+
+#header ul a::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: 2px;
+    background-color: var(--color-almond-soft);
+    transform: scaleX(0);
+    transform-origin: right;
+    transition: transform var(--transition-slide);
+}
+
+#header ul a:hover::after {
+    transform: scaleX(1);
+    transform-origin: left;
+}
+
+/* ==========================================================================
+   5. COMPONENTS
+   ========================================================================== */
+
+#hero {
+    padding: 120px 0 100px 0;
+}
+
+.cta-buttons {
+    display: flex;
+    gap: 16px;
+    margin-top: 24px;
+}
+
+.btn-primary,
+.btn-secondary {
+    padding: 12px 24px;
+    border-radius: 6px;
+    font-weight: 600;
+    font-size: 0.95rem;
+    transition: all var(--transition-smooth);
+}
+
+.btn-primary {
+    background-color: var(--color-dark-plum);
+    color: var(--color-almond-soft);
+    border: 1px solid var(--color-dark-plum);
+}
+
+.btn-primary:hover {
+    background-color: var(--color-slate-blue);
+    border-color: var(--color-slate-blue);
+}
+
+.btn-secondary {
+    background-color: transparent;
+    color: var(--color-dark-plum);
+    border: 1px solid var(--color-dark-plum);
+}
+
+/* FIX: Sanfterer Hover-Effekt für den transparenten Button */
+.btn-secondary:hover {
+    background-color: rgba(34, 34, 59, 0.06);
+    border-color: var(--color-dark-plum);
+}
+
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 20px;
+    margin-top: 24px;
+}
+
+.stat-card {
+    background-color: var(--layer-card-bg);
+    border: 1px solid var(--layer-border-light);
+    padding: 24px;
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.stat-number {
+    font-family: "Space Grotesk", sans-serif;
+    font-size: 2.2rem;
+    font-weight: 700;
+    color: var(--color-dark-plum);
+    line-height: 1;
+}
+
+.stat-label {
+    font-size: 0.9rem;
+    color: var(--color-slate-blue);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-weight: 600;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 24px;
+    font-size: 0.95rem;
+    text-align: left;
+}
+
+th,
+td {
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--layer-border-light);
+}
+
+th {
+    font-family: "Space Grotesk", sans-serif;
+    font-weight: 600;
+    color: var(--color-dark-plum);
+    background-color: var(--layer-table-th);
+}
+
+td {
+    color: var(--color-dark-plum);
+    opacity: 0.9;
+}
+
+tr:hover td {
+    background-color: var(--layer-table-hover);
+}
+
+pre {
+    background-color: var(--layer-code-bg);
+    border: 1px solid var(--layer-border-dark);
+    border-radius: 8px;
+    padding: 20px;
+    overflow-x: auto;
+    margin-top: 16px;
+}
+
+code {
+    font-family: "Courier New", Courier, monospace;
+    font-size: 0.9rem;
+    color: var(--color-almond-soft);
+    line-height: 1.5;
+}
+
+/* ==========================================================================
+   6. FOOTER
+   ========================================================================== */
+#footer {
+    max-width: var(--max-width);
+    margin: 0 auto;
+    padding: 40px 24px;
+    border-top: 1px solid var(--layer-border-light);
+    text-align: center;
+    font-size: 0.9rem;
+    color: var(--color-slate-blue);
+}
+
+#footer a {
+    color: var(--color-dark-plum);
+    text-decoration: underline;
+}
+
+#footer a:hover {
+    color: var(--color-slate-blue);
+}
