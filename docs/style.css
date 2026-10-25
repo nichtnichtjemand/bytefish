@@ -366,3 +366,56 @@ code {
 #footer a:hover {
     color: var(--color-slate-blue);
 }
+
+/* =========================================================
+   BYTEFISH — PLAYFUL, BUT COHESIVE
+   ========================================================= */
+
+:root {
+    --board-light: #f0e5de;
+    --board-dark: #aa9bb9;
+    --board-outline: rgba(44, 43, 64, 0.18);
+    --board-radius: 18px;
+}
+
+/* Container: kein dicker unterer Streifen */
+#live-board {
+    border: 0;
+    border-radius: var(--board-radius);
+    overflow: hidden;
+    background: transparent;
+    box-shadow:
+        0 8px 24px rgba(44, 43, 64, 0.16),
+        0 2px 5px rgba(44, 43, 64, 0.08);
+}
+
+/* Das tatsächliche Brett */
+#live-board .board-b72b1 {
+    border: 1px solid var(--board-outline);
+    border-radius: var(--board-radius);
+    overflow: hidden;
+    background: var(--board-light);
+}
+
+/* Feldfarben */
+#live-board .white-1e1d7 {
+    background-color: var(--board-light);
+}
+
+#live-board .black-3c85d {
+    background-color: var(--board-dark);
+}
+
+/* Dezente Animation */
+#live-board .square-55d63 {
+    transition: background-color 160ms ease;
+}
+
+/* Kleinere Rundung auf schmalen Bildschirmen */
+@media (max-width: 600px) {
+
+    #live-board,
+    #live-board .board-b72b1 {
+        border-radius: 12px;
+    }
+}

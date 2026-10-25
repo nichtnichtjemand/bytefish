@@ -2,46 +2,101 @@
 <html lang="en">
 
 <head>
-    <!-- Encoding & viewport -->
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
 
-    <!-- Basic metadata -->
     <title>Bytefish | Independent Chess Engine</title>
     <meta name="description"
-        content="Bytefish is a modern, homemade chess engine written for performance and analytical precision.">
+        content="Bytefish is an independent chess engine written in Mojo, focused on performance and analytical precision.">
     <meta name="author" content="nichtnichtjemand">
-
-    <!-- Browser & theme -->
     <meta name="theme-color" content="#22223b">
     <meta name="color-scheme" content="dark light">
-
-    <!-- Search engines -->
     <meta name="robots" content="index, follow">
 
     <!-- Open Graph -->
     <meta property="og:type" content="website">
-    <meta property="og:title" content="Bytefish">
-    <meta property="og:description" content="A homemade chess engine built from scratch.">
+    <meta property="og:title" content="Bytefish | Chess Engine">
+    <meta property="og:description"
+        content="An independent chess engine built from scratch. Follow Bytefish's games and development.">
     <meta property="og:url" content="https://nichtnichtjemand.github.io/bytefish/">
-    <meta property="og:image" content="assets/og-image.png">
+    <meta property="og:image" content="https://nichtnichtjemand.github.io/bytefish/assets/og-image.png">
 
-    <!-- Twitter / social previews -->
+    <!-- Social previews -->
     <meta name="twitter:card" content="summary_large_image">
 
     <!-- Icons -->
     <link rel="icon" href="favicon.svg" type="image/svg+xml">
 
+    <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link
         href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap"
         rel="stylesheet">
 
-    <!-- Stylesheets -->
+    <!-- Chessboard.js stylesheet -->
+    <link rel="stylesheet" href="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.css">
+
+    <!-- Your stylesheet -->
     <link rel="stylesheet" href="style.css">
 
-    <!-- JavaScript -->
+    <!-- Additional styles for the live game -->
+    <style>
+        .live-game-layout {
+            display: grid;
+            grid-template-columns: minmax(0, 1.2fr) minmax(220px, 1fr);
+            gap: 2rem;
+            align-items: start;
+            margin-top: 2rem;
+        }
+
+        #live-board {
+            width: 100%;
+            max-width: 520px;
+            margin-inline: auto;
+        }
+
+        .live-game-info {
+            min-width: 0;
+            overflow-wrap: anywhere;
+        }
+
+        #live-status {
+            font-weight: 700;
+        }
+
+        #live-moves {
+            max-height: 260px;
+            overflow-y: auto;
+            padding-left: 2rem;
+        }
+
+        #live-link {
+            display: inline-block;
+            margin-top: 1rem;
+        }
+
+        .live-game-meta {
+            color: #999;
+            font-size: 0.9rem;
+        }
+
+        @media (max-width: 700px) {
+            .live-game-layout {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+
+    <!-- Dependencies: order matters -->
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js" defer></script>
+
+    <script src="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.js" defer></script>
+
+    <!-- Chess rules and move parsing -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js" defer></script>
+
+    <!-- Your JavaScript, loaded last -->
     <script src="script.js" defer></script>
 </head>
 
@@ -51,9 +106,11 @@
     <header id="header">
         <nav aria-label="Main navigation">
             <a href="#" class="logo">Bytefish</a>
+
             <ul>
                 <li><a href="#about">About</a></li>
                 <li><a href="#statistics">Statistics</a></li>
+                <li><a href="#live-game">Live Game</a></li>
                 <li><a href="#benchmarks">Benchmarks</a></li>
                 <li><a href="#technology">Technology</a></li>
             </ul>
@@ -61,121 +118,211 @@
     </header>
 
     <main id="main">
-        <!-- Hero Section -->
+
+        <!-- Hero -->
         <section id="hero">
             <h1>Bytefish</h1>
-            <!-- OPTIMIERUNG: Unnötige Klasse entfernt, p reicht völlig -->
-            <p>An independent chess engine focused on minimalist design and aggressive positional play. Built from
-                scratch with performance in mind.</p>
+
+            <p>
+                An independent chess engine focused on performance,
+                analytical precision and aggressive positional play.
+                Built from scratch.
+            </p>
+
             <div class="cta-buttons">
-                <!-- OPTIMIERUNG: rel="noopener" für sichere externe Links hinzugefügt -->
-                <a href="https://github.com" class="btn-primary" target="_blank" rel="noopener">View on GitHub</a>
-                <a href="#benchmarks" class="btn-secondary">See Benchmarks</a>
+                <a href="https://github.com/nichtnichtjemand/bytefish" class="btn-primary" target="_blank"
+                    rel="noopener noreferrer">
+                    View on GitHub
+                </a>
+
+                <a href="#live-game" class="btn-secondary">
+                    Watch Live
+                </a>
             </div>
         </section>
 
-        <!-- About Section -->
+        <!-- About -->
         <section id="about">
             <h2>About the Project</h2>
-            <p>Bytefish is a UCI-compliant chess engine. It started as a hobby project, but quickly became an actual
-                working advanced chess engine, even though it is much worse than engines like Stockfish.</p>
+
+            <p>
+                Bytefish is a UCI-compatible chess engine developed
+                as an independent programming project. It combines
+                search algorithms, position evaluation and move
+                ordering to find strong moves.
+            </p>
 
             <h3>Key Features</h3>
+
             <ul>
                 <li>
-                    <strong>UCI Protocol Support:</strong> Compatible with popular GUIs like Arena, Cutechess, and
-                    Bankafi.
+                    <strong>UCI Protocol:</strong>
+                    Compatible with chess GUIs that support UCI engines.
                 </li>
                 <li>
-                    <strong>Bitboard Architecture:</strong> Uses bitboards for move generation.
+                    <strong>Bitboards:</strong>
+                    Efficient board representation and move generation.
                 </li>
                 <li>
-                    <strong>Search:</strong> Uses Minimax, Alpha-Beta-Pruning and other algorithms for the best move
-                    selection.
+                    <strong>Search:</strong>
+                    Minimax, alpha-beta pruning and move ordering.
+                </li>
+                <li>
+                    <strong>Mojo:</strong>
+                    A performance-oriented implementation.
                 </li>
             </ul>
         </section>
 
-        <!-- Statistics Section -->
+        <!-- Statistics -->
         <section id="statistics">
             <h2>Statistics</h2>
-            <p>Current analytical metrics and testing pool records against baseline engines.</p>
+
+            <p>
+                Current playing strength and performance metrics.
+            </p>
 
             <div class="stats-grid">
                 <article class="stat-card">
                     <span class="stat-number">1700</span>
-                    <span class="stat-label">Lichess ELO</span>
+                    <span class="stat-label">Lichess Rapid Elo</span>
                 </article>
+
                 <article class="stat-card">
                     <span class="stat-number">80k+</span>
                     <span class="stat-label">Nodes per Second</span>
                 </article>
             </div>
+
+            <p class="live-game-meta">
+                Elo and performance values are manually maintained
+                and may not reflect the latest results.
+            </p>
         </section>
 
-        <!-- Benchmarks Section -->
+        <!-- Live Game -->
+        <section id="live-game">
+            <h2>Live Game</h2>
+
+            <p>
+                Follow Bytefish in action on Lichess.
+                The board updates automatically while a game is available.
+            </p>
+
+            <div class="live-game-layout">
+
+                <!-- Chessboard.js renders the board here -->
+                <div>
+                    <div id="live-board" role="img" aria-label="Bytefish current chess position">
+                    </div>
+                </div>
+
+                <!-- Game information -->
+                <div class="live-game-info">
+                    <p id="live-status" aria-live="polite">
+                        Loading game...
+                    </p>
+
+                    <h3 id="live-players">Bytefish</h3>
+
+                    <p id="live-details" class="live-game-meta"></p>
+
+                    <h4>Moves</h4>
+
+                    <ol id="live-moves"></ol>
+
+                    <a id="live-link" href="https://lichess.org/@/Bytefish" target="_blank" rel="noopener noreferrer">
+                        View on Lichess →
+                    </a>
+                </div>
+
+            </div>
+        </section>
+
+        <!-- Benchmarks -->
         <section id="benchmarks">
             <h2>Benchmarks</h2>
-            <p>Performance comparison across different depths using the startposition.</p>
 
-            <table>
-                <thead>
-                    <tr>
-                        <th scope="col">Depth</th>
-                        <th scope="col">Nodes Searched</th>
-                        <th scope="col">Time (s)</th>
-                        <th scope="col">NPS</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <tr>
-                        <td>5</td>
-                        <td>48,595</td>
-                        <td>0.55</td>
-                        <td>89 kNPS</td>
-                    </tr>
-                    <tr>
-                        <td>6</td>
-                        <td>286,072</td>
-                        <td>3.45</td>
-                        <td>83 kNPS</td>
-                    </tr>
-                    <tr>
-                        <td>7</td>
-                        <td>2,226,560</td>
-                        <td>25.1</td>
-                        <td>87 kNPS</td>
-                    </tr>
-                </tbody>
-            </table>
+            <p>
+                Performance measurements using the starting position.
+                Results depend on hardware and compiler settings.
+            </p>
+
+            <div class="table-wrapper">
+                <table>
+                    <thead>
+                        <tr>
+                            <th scope="col">Depth</th>
+                            <th scope="col">Nodes Searched</th>
+                            <th scope="col">Time (s)</th>
+                            <th scope="col">NPS</th>
+                        </tr>
+                    </thead>
+
+                    <tbody>
+                        <tr>
+                            <td>5</td>
+                            <td>48,595</td>
+                            <td>0.55</td>
+                            <td>89 kNPS</td>
+                        </tr>
+
+                        <tr>
+                            <td>6</td>
+                            <td>286,072</td>
+                            <td>3.45</td>
+                            <td>83 kNPS</td>
+                        </tr>
+
+                        <tr>
+                            <td>7</td>
+                            <td>2,226,560</td>
+                            <td>25.1</td>
+                            <td>87 kNPS</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
         </section>
 
-        <!-- Technology Section -->
+        <!-- Technology -->
         <section id="technology">
             <h2>Technology</h2>
-            <p>Bytefish uses the new programming language Mojo, which combines the structure of Python with the speed of
-                C++.</p>
+
+            <p>
+                Bytefish is implemented in Mojo, a programming
+                language designed with performance and Python-like
+                syntax in mind.
+            </p>
 
             <div class="tech-info">
-                <h3>Compilation & Run</h3>
-                <p>You can build Bytefish using any standard compiler. Here is the quick setup guide:</p>
+                <h3>Build & Run</h3>
 
-                <pre><code class="language-bash"># Clone the repository
-git clone https://github.com/nichtnichtjemand/bytefish.git
+                <p>
+                    Clone the repository and compile the engine
+                    using a compatible Mojo toolchain.
+                </p>
+
+                <pre><code class="language-bash">git clone https://github.com/nichtnichtjemand/bytefish.git
 cd bytefish
 
-# Build the engine
 mojo build main.mojo -o bytefish
-
-# Run the UCI interface
 ./bytefish</code></pre>
             </div>
         </section>
+
     </main>
 
+    <!-- Footer -->
     <footer id="footer">
-        <p>&copy; 2026 Bytefish Project. Created by <a href="https://github.com/nichtnichtjemand" target="_blank"
-                rel="noopener">nichtnichtjemand</a>. Released under the MIT License.</p>
+        <p>
+            &copy; 2026 Bytefish Project.
+            Created by
+            <a href="https://github.com/nichtnichtjemand" target="_blank" rel="noopener noreferrer">
+                nichtnichtjemand
+            </a>.
+            Released under the MIT License.
+        </p>
     </footer>
 </body>
 
