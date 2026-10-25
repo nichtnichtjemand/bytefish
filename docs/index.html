@@ -40,53 +40,7 @@
     <!-- Your stylesheet -->
     <link rel="stylesheet" href="style.css">
 
-    <!-- Additional styles for the live game -->
-    <style>
-        .live-game-layout {
-            display: grid;
-            grid-template-columns: minmax(0, 1.2fr) minmax(220px, 1fr);
-            gap: 2rem;
-            align-items: start;
-            margin-top: 2rem;
-        }
 
-        #live-board {
-            width: 100%;
-            max-width: 520px;
-            margin-inline: auto;
-        }
-
-        .live-game-info {
-            min-width: 0;
-            overflow-wrap: anywhere;
-        }
-
-        #live-status {
-            font-weight: 700;
-        }
-
-        #live-moves {
-            max-height: 260px;
-            overflow-y: auto;
-            padding-left: 2rem;
-        }
-
-        #live-link {
-            display: inline-block;
-            margin-top: 1rem;
-        }
-
-        .live-game-meta {
-            color: #999;
-            font-size: 0.9rem;
-        }
-
-        @media (max-width: 700px) {
-            .live-game-layout {
-                grid-template-columns: 1fr;
-            }
-        }
-    </style>
 
     <!-- Dependencies: order matters -->
     <script src="https://code.jquery.com/jquery-3.7.1.min.js" defer></script>
@@ -217,24 +171,49 @@
                     </div>
                 </div>
 
-                <!-- Game information -->
-                <div class="live-game-info">
-                    <p id="live-status" aria-live="polite">
-                        Loading game...
-                    </p>
+                <!-- Game overview -->
+                <aside class="game-overview">
+                    <div class="overview-header">
+                        <span class="status-indicator"></span>
+                        <span id="live-status" aria-live="polite">Loading game...</span>
+                    </div>
 
-                    <h3 id="live-players">Bytefish</h3>
+                    <h3>Game Overview</h3>
 
-                    <p id="live-details" class="live-game-meta"></p>
+                    <div class="player-card" id="white-card">
+                        <div class="player-icon">♔</div>
+                        <div class="player-info">
+                            <span class="player-label">WHITE</span>
+                            <strong id="live-white">White</strong>
+                        </div>
+                        <div class="player-clock" id="white-clock">—:—</div>
+                    </div>
 
-                    <h4>Moves</h4>
+                    <div class="player-card" id="black-card">
+                        <div class="player-icon black-piece">♚</div>
+                        <div class="player-info">
+                            <span class="player-label">BLACK</span>
+                            <strong id="live-black">Black</strong>
+                        </div>
+                        <div class="player-clock" id="black-clock">—:—</div>
+                    </div>
 
-                    <ol id="live-moves"></ol>
+                    <div class="overview-stats">
+                        <div class="stat-card">
+                            <span>Time control</span>
+                            <strong id="live-details">—</strong>
+                        </div>
+                        <div class="stat-card">
+                            <span>Half-moves</span>
+                            <strong id="live-move-count">0</strong>
+                        </div>
 
-                    <a id="live-link" href="https://lichess.org/@/Bytefish" target="_blank" rel="noopener noreferrer">
-                        View on Lichess →
-                    </a>
-                </div>
+                    </div>
+
+
+                    <a id="live-link" class="game-link" href="https://lichess.org/@/Bytefish" target="_blank"
+                        rel="noopener noreferrer">View on Lichess ↗</a>
+                </aside>
 
             </div>
         </section>

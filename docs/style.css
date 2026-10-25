@@ -1,34 +1,23 @@
 /* ==========================================================================
    1. RESET, CSS VARIABLES & TOKENS
    ========================================================================== */
-* {
-    margin: 0;
-    padding: 0;
-    box-sizing: border-box;
-    user-select: none;
-    -webkit-user-select: none;
-}
-
-
-
 :root {
-    /* Deine 5-Farben-Palette */
+    /* 5-Color Palette */
     --color-dark-plum: #22223b;
     --color-slate-blue: #4a4e69;
     --color-mauve-taupe: #9a8c98;
     --color-rose-tint: #c9ada7;
     --color-almond-soft: #f2e9e4;
 
-    /* Semantische Zuweisung */
+    /* Semantic Assignments */
     --bg-main: var(--color-mauve-taupe);
     --bg-surface: var(--color-almond-soft);
     --text-main: var(--color-dark-plum);
     --text-muted: var(--color-slate-blue);
-    /* Geändert auf Slate für besseren Kontrast auf Mauve */
+    --text-color: #302f46;
 
-    /* Alpha-Layer (Echte, lesbare Kontraste) */
+    /* Alpha Layers */
     --layer-header: rgba(34, 34, 59, 0.95);
-    /* Dunkler Header-Grund */
     --layer-border-dark: rgba(74, 78, 105, 0.4);
     --layer-border-light: rgba(74, 78, 105, 0.2);
     --layer-card-bg: rgba(242, 233, 228, 0.12);
@@ -36,11 +25,27 @@
     --layer-table-hover: rgba(242, 233, 228, 0.08);
     --layer-code-bg: rgba(34, 34, 59, 0.7);
 
-    /* Layout */
+    /* Bytefish / Chessboard Tokens */
+    --board-light: #f0e5de;
+    --board-dark: #aa9bb9;
+    --board-outline: rgba(44, 43, 64, 0.18);
+    --board-radius: 18px;
+
+    /* Layout & Transitions */
     --max-width: 1100px;
     --transition-fast: 180ms ease;
     --transition-smooth: 200ms ease;
     --transition-slide: 250ms ease;
+}
+
+*,
+*::before,
+*::after {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    user-select: none;
+    -webkit-user-select: none;
 }
 
 html {
@@ -90,7 +95,6 @@ p.p1 {
     max-width: 70ch;
     color: var(--text-main);
     opacity: 0.85;
-    /* Leicht sanfter, ohne unleserlich zu werden */
     margin-bottom: 1.5em;
 }
 
@@ -181,7 +185,6 @@ section:last-of-type {
     color: var(--color-almond-soft);
 }
 
-/* FIX: Überschreibt das globale margin-bottom von ul-Elementen im Header */
 #header ul {
     display: flex;
     gap: 32px;
@@ -189,7 +192,6 @@ section:last-of-type {
     margin-bottom: 0;
 }
 
-/* FIX: Textfarbe im dunklen Header auf die helle Kontrastfarbe geändert */
 #header ul a {
     font-size: 0.95rem;
     font-weight: 500;
@@ -221,9 +223,8 @@ section:last-of-type {
 }
 
 /* ==========================================================================
-   5. COMPONENTS
+   5. COMPONENTS & GENERAL UI
    ========================================================================== */
-
 #hero {
     padding: 120px 0 100px 0;
 }
@@ -260,7 +261,6 @@ section:last-of-type {
     border: 1px solid var(--color-dark-plum);
 }
 
-/* FIX: Sanfterer Hover-Effekt für den transparenten Button */
 .btn-secondary:hover {
     background-color: rgba(34, 34, 59, 0.06);
     border-color: var(--color-dark-plum);
@@ -281,6 +281,7 @@ section:last-of-type {
     display: flex;
     flex-direction: column;
     gap: 8px;
+    min-width: 0;
 }
 
 .stat-number {
@@ -346,7 +347,201 @@ code {
 }
 
 /* ==========================================================================
-   6. FOOTER
+   6. BYTEFISH — LIVE GAME & CHESSBOARD
+   ========================================================================== */
+.live-game-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1.2fr) minmax(220px, 1fr);
+    gap: 2rem;
+    align-items: start;
+    margin-top: 2rem;
+}
+
+#live-board {
+    width: 100%;
+    max-width: 520px;
+    margin-inline: auto;
+    border: 0;
+    border-radius: var(--board-radius);
+    overflow: hidden;
+    background: transparent;
+    box-shadow:
+        0 8px 24px rgba(44, 43, 64, 0.16),
+        0 2px 5px rgba(44, 43, 64, 0.08);
+}
+
+#live-board .board-b72b1 {
+    border: 1px solid var(--board-outline);
+    border-radius: var(--board-radius);
+    overflow: hidden;
+    background: var(--board-light);
+}
+
+#live-board .white-1e1d7 {
+    background-color: var(--board-light);
+}
+
+#live-board .black-3c85d {
+    background-color: var(--board-dark);
+}
+
+#live-board .square-55d63 {
+    transition: background-color 160ms ease;
+}
+
+.game-overview {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    min-width: 0;
+    color: var(--text-color);
+}
+
+.overview-header {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    font-size: 0.9rem;
+}
+
+.status-indicator {
+    width: 9px;
+    height: 9px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    background: #79b99b;
+    box-shadow: 0 0 0 4px rgba(121, 185, 155, 0.16);
+}
+
+.game-overview h3 {
+    margin: 0;
+}
+
+.player-card {
+    display: flex;
+    align-items: center;
+    gap: 13px;
+    padding: 0.5rem 0.75rem;
+    border: 2px solid transparent;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.02);
+    opacity: 0.55;
+    margin-bottom: 0.75rem;
+    transition: all 0.3s ease, background 180ms ease, transform 180ms ease;
+}
+
+.player-card:hover {
+    background: rgba(255, 255, 255, 0.13);
+    transform: translateY(-2px);
+}
+
+.player-card.active-turn {
+    opacity: 1;
+    border-color: #e7b94f;
+    background: rgba(231, 185, 79, 0.05);
+    animation: pulse-turn 2s infinite ease-in-out;
+}
+
+@keyframes pulse-turn {
+    0% {
+        box-shadow: 0 0 5px rgba(231, 185, 79, 0.1);
+    }
+
+    50% {
+        box-shadow: 0 0 14px rgba(231, 185, 79, 0.35);
+    }
+
+    100% {
+        box-shadow: 0 0 5px rgba(231, 185, 79, 0.1);
+    }
+}
+
+.player-icon {
+    display: grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    flex-shrink: 0;
+    border-radius: 13px;
+    background: #f0e5de;
+    color: #302f46;
+    font-size: 1.8rem;
+}
+
+.player-icon.black-piece {
+    background: #aa9bb9;
+}
+
+.player-info {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+
+.player-info strong {
+    overflow-wrap: anywhere;
+}
+
+.player-label {
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    opacity: 0.7;
+}
+
+.overview-stats {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+}
+
+.game-link {
+    align-self: flex-start;
+    display: inline-block;
+    margin-top: 2px;
+    padding: 11px 15px;
+    border-radius: 12px;
+    background: #302f46;
+    color: #f5eee9;
+    text-decoration: none;
+    transition: background 180ms ease, transform 180ms ease;
+}
+
+.game-link:hover {
+    background: #48445f;
+    transform: translateY(-1px);
+}
+
+.live-game-info {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+#live-status {
+    font-weight: 700;
+}
+
+#live-moves {
+    max-height: 260px;
+    overflow-y: auto;
+    padding-left: 2rem;
+    margin-top: 1rem;
+    margin-bottom: 1rem;
+}
+
+#live-link {
+    display: inline-block;
+    margin-top: 1rem;
+}
+
+.live-game-meta {
+    color: #999;
+    font-size: 0.9rem;
+}
+
+/* ==========================================================================
+   7. FOOTER
    ========================================================================== */
 #footer {
     max-width: var(--max-width);
@@ -367,55 +562,80 @@ code {
     color: var(--color-slate-blue);
 }
 
-/* =========================================================
-   BYTEFISH — PLAYFUL, BUT COHESIVE
-   ========================================================= */
+/* ==========================================================================
+   8. RESPONSIVE BREAKPOINTS
+   ========================================================================== */
+@media (max-width: 700px) {
+    .live-game-layout {
+        grid-template-columns: 1fr;
+    }
 
-:root {
-    --board-light: #f0e5de;
-    --board-dark: #aa9bb9;
-    --board-outline: rgba(44, 43, 64, 0.18);
-    --board-radius: 18px;
+    .game-overview {
+        gap: 13px;
+    }
 }
 
-/* Container: kein dicker unterer Streifen */
-#live-board {
-    border: 0;
-    border-radius: var(--board-radius);
-    overflow: hidden;
-    background: transparent;
-    box-shadow:
-        0 8px 24px rgba(44, 43, 64, 0.16),
-        0 2px 5px rgba(44, 43, 64, 0.08);
-}
-
-/* Das tatsächliche Brett */
-#live-board .board-b72b1 {
-    border: 1px solid var(--board-outline);
-    border-radius: var(--board-radius);
-    overflow: hidden;
-    background: var(--board-light);
-}
-
-/* Feldfarben */
-#live-board .white-1e1d7 {
-    background-color: var(--board-light);
-}
-
-#live-board .black-3c85d {
-    background-color: var(--board-dark);
-}
-
-/* Dezente Animation */
-#live-board .square-55d63 {
-    transition: background-color 160ms ease;
-}
-
-/* Kleinere Rundung auf schmalen Bildschirmen */
 @media (max-width: 600px) {
 
     #live-board,
     #live-board .board-b72b1 {
         border-radius: 12px;
+    }
+}
+
+.player-card {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    transition: all 0.3s ease;
+    border: 2px solid transparent;
+    opacity: 0.55;
+    background: rgba(255, 255, 255, 0.02);
+    border-radius: 8px;
+    padding: 0.5rem 0.75rem;
+    margin-bottom: 0.75rem;
+}
+
+.player-card.active-turn {
+    opacity: 1;
+    border-color: #e7b94f;
+    background: rgba(231, 185, 79, 0.05);
+    animation: pulse-turn 2s infinite ease-in-out;
+}
+
+.player-info {
+    flex-grow: 1;
+    margin-left: 0.75rem;
+}
+
+.player-clock {
+    font-family: 'Space Grotesk', monospace, sans-serif;
+    font-weight: 700;
+    font-size: 0.95rem;
+    color: #aaa;
+    background: rgba(0, 0, 0, 0.2);
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    letter-spacing: 0.05em;
+    min-width: 55px;
+    text-align: center;
+}
+
+.player-card.active-turn .player-clock {
+    color: #e7b94f;
+    background: rgba(231, 185, 79, 0.1);
+}
+
+@keyframes pulse-turn {
+    0% {
+        box-shadow: 0 0 5px rgba(231, 185, 79, 0.1);
+    }
+
+    50% {
+        box-shadow: 0 0 14px rgba(231, 185, 79, 0.35);
+    }
+
+    100% {
+        box-shadow: 0 0 5px rgba(231, 185, 79, 0.1);
     }
 }

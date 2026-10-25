@@ -1,4 +1,3 @@
-
 "use strict";
 
 const CONFIG = {
@@ -11,10 +10,11 @@ const CONFIG = {
 const elements = {
     board: document.getElementById("live-board"),
     status: document.getElementById("live-status"),
-    players: document.getElementById("live-players"),
     details: document.getElementById("live-details"),
-    moves: document.getElementById("live-moves"),
-    link: document.getElementById("live-link")
+    link: document.getElementById("live-link"),
+    white: document.getElementById("live-white"),
+    black: document.getElementById("live-black"),
+    moveCount: document.getElementById("live-move-count")
 };
 
 let board = null;
@@ -24,7 +24,12 @@ let activeController = null;
 let retryTimer = null;
 let currentGameId = null;
 let currentFen = null;
-let moveHistory = [];
+
+// Clock states
+let whiteTimeMs = null;
+let blackTimeMs = null;
+let currentTurn = null;
+let clockInterval = null;
 
 // --------------------------------------------------
 // Initialization
@@ -55,7 +60,6 @@ function initialize() {
     });
 
     setupBoardAnnotations();
-
 
     window.addEventListener("resize", () => board?.resize());
 
@@ -99,6 +103,39 @@ function scheduleRetry(delay = CONFIG.refreshInterval) {
     retryTimer = setTimeout(discoverGame, delay);
 }
 
+function formatTime(ms) {
+    if (ms === undefined || ms === null || isNaN(ms)) return "—:—";
+    const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+}
+
+function startClockTicker() {
+    if (clockInterval) return;
+
+    clockInterval = setInterval(() => {
+        if (!currentFen || !currentTurn) return;
+
+        if (currentTurn === "w" && whiteTimeMs !== null && whiteTimeMs > 0) {
+            whiteTimeMs -= 1000;
+            const el = document.getElementById("white-clock");
+            if (el) el.textContent = formatTime(whiteTimeMs);
+        } else if (currentTurn === "b" && blackTimeMs !== null && blackTimeMs > 0) {
+            blackTimeMs -= 1000;
+            const el = document.getElementById("black-clock");
+            if (el) el.textContent = formatTime(blackTimeMs);
+        }
+    }, 1000);
+}
+
+function stopClockTicker() {
+    if (clockInterval) {
+        clearInterval(clockInterval);
+        clockInterval = null;
+    }
+}
+
 // --------------------------------------------------
 // Find the current game
 // --------------------------------------------------
@@ -131,7 +168,6 @@ async function discoverGame() {
 
         if (stopped || myGeneration !== generation) return;
 
-        // Lichess can return 404 when no current game exists.
         if (response.status === 404) {
             showNoGame();
             scheduleRetry();
@@ -146,7 +182,6 @@ async function discoverGame() {
 
         const pgn = await response.text();
 
-
         const match = pgn.match(
             /^\[GameId\s+"([A-Za-z0-9_-]+)"\]/mi
         );
@@ -160,14 +195,7 @@ async function discoverGame() {
 
         const gameId = match[1];
 
-        console.log("Detected Lichess game ID:", gameId);
-
-
-
-        console.log("Detected Lichess game ID:", gameId);
-
         if (gameId === currentGameId) {
-            // The current stream already handles this game.
             return;
         }
 
@@ -198,37 +226,45 @@ async function discoverGame() {
 // --------------------------------------------------
 // Game information
 // --------------------------------------------------
-
 function renderGameInfo(game) {
     const white = getPlayerName(game.players?.white, "White");
     const black = getPlayerName(game.players?.black, "Black");
 
-    elements.players.textContent = `${white} vs. ${black}`;
+    elements.white.textContent = white;
+    elements.black.textContent = black;
+    elements.details.textContent = getGameSpeed(game);
 
-    const speed = game.speed
-        ? game.speed.charAt(0).toUpperCase() + game.speed.slice(1)
-        : "";
+    elements.link.href =
+        `${CONFIG.lichessUrl}/${encodeURIComponent(game.id)}`;
 
-    const rated = game.rated ? "Rated" : "Casual";
+    elements.link.textContent = "View on Lichess ↗";
+}
 
-    elements.details.textContent = [speed, rated]
-        .filter(Boolean)
-        .join(" · ");
-
-    elements.link.href = `${CONFIG.lichessUrl}/${encodeURIComponent(game.id)}`;
-    elements.link.textContent = "View game on Lichess →";
+function getGameSpeed(game) {
+    return game.speed ?? game.perf?.name ?? "Standard";
 }
 
 function showNoGame() {
     currentGameId = null;
     currentFen = null;
-    moveHistory = [];
+    whiteTimeMs = null;
+    blackTimeMs = null;
+    currentTurn = null;
+
+    stopClockTicker();
 
     setStatus("Bytefish is not playing right now.");
 
-    elements.players.textContent = "No active game";
+    if (elements.white) elements.white.textContent = "White";
+    if (elements.black) elements.black.textContent = "Black";
     elements.details.textContent = "";
-    elements.moves.replaceChildren();
+
+    const whiteClock = document.getElementById("white-clock");
+    const blackClock = document.getElementById("black-clock");
+    if (whiteClock) whiteClock.textContent = "—:—";
+    if (blackClock) blackClock.textContent = "—:—";
+
+    document.querySelectorAll(".player-card").forEach(card => card.classList.remove("active-turn"));
 
     elements.link.href =
         `${CONFIG.lichessUrl}/@/${encodeURIComponent(CONFIG.username)}`;
@@ -236,47 +272,6 @@ function showNoGame() {
     elements.link.textContent = "View Bytefish on Lichess →";
 
     board?.position("start", false);
-}
-
-// --------------------------------------------------
-// Move list
-// --------------------------------------------------
-
-function renderMoves() {
-    const fragment = document.createDocumentFragment();
-
-    moveHistory.forEach((move, index) => {
-        const item = document.createElement("li");
-
-        item.textContent =
-            `${Math.floor(index / 2) + 1}. ` +
-            (index % 2 === 0 ? move : "");
-
-        if (index % 2 === 1) {
-            item.textContent = move;
-        }
-
-        fragment.appendChild(item);
-    });
-
-    elements.moves.replaceChildren(fragment);
-}
-
-function uciToSan(uci) {
-    if (!/^[a-h][1-8][a-h][1-8][qrbn]?$/i.test(uci)) {
-        return uci;
-    }
-
-    const move = {
-        from: uci.slice(0, 2),
-        to: uci.slice(2, 4)
-    };
-
-    if (uci.length === 5) {
-        move.promotion = uci[4].toLowerCase();
-    }
-
-    return move;
 }
 
 // --------------------------------------------------
@@ -289,9 +284,7 @@ async function streamGame(gameId, myGeneration) {
 
     currentGameId = gameId;
     currentFen = null;
-    moveHistory = [];
 
-    const chess = new window.Chess();
     let receivedFirstMessage = false;
     let buffer = "";
 
@@ -299,7 +292,6 @@ async function streamGame(gameId, myGeneration) {
 
     elements.link.href = `${CONFIG.lichessUrl}/${encodeURIComponent(gameId)}`;
     elements.link.textContent = "View game on Lichess →";
-    elements.moves.replaceChildren();
 
     const timeoutId = setTimeout(() => {
         if (!receivedFirstMessage) {
@@ -362,39 +354,57 @@ async function streamGame(gameId, myGeneration) {
                         renderGameInfo(event);
                     }
 
-                    // Subsequent messages contain FEN and optional "lm".
-                    if (event.fen) {
-                        if (event.lm && currentFen) {
-                            try {
-                                chess.load(currentFen);
+                    const fen = event.fen ?? event.state?.fen;
 
-                                const move = chess.move(
-                                    uciToSan(event.lm)
-                                );
+                    const wc = event.wc ?? event.state?.wc;
+                    const bc = event.bc ?? event.state?.bc;
+                    const wtime = event.wtime ?? event.state?.wtime ?? (wc !== undefined ? wc * 1000 : null);
+                    const btime = event.btime ?? event.state?.btime ?? (bc !== undefined ? bc * 1000 : null);
 
-                                moveHistory.push(
-                                    move?.san ?? event.lm
-                                );
-
-                                renderMoves();
-                            } catch (error) {
-                                console.warn(
-                                    "Could not process move:",
-                                    event.lm,
-                                    error
-                                );
-                            }
-                        }
-
-                        currentFen = event.fen;
-                        board.position(event.fen, true);
-                        setStatus("Live game");
+                    if (wtime !== undefined && wtime !== null) {
+                        whiteTimeMs = wtime;
+                        const whiteClock = document.getElementById("white-clock");
+                        if (whiteClock) whiteClock.textContent = formatTime(whiteTimeMs);
+                    }
+                    if (btime !== undefined && btime !== null) {
+                        blackTimeMs = btime;
+                        const blackClock = document.getElementById("black-clock");
+                        if (blackClock) blackClock.textContent = formatTime(blackTimeMs);
                     }
 
-                    const status = getStatusName(event.status);
+                    if (fen) {
+                        currentFen = fen;
+                        board.position(fen, true);
+                        setStatus("Live game");
+
+                        const fenParts = fen.split(" ");
+                        if (fenParts.length >= 6) {
+                            currentTurn = fenParts[1]; // "w" oder "b"
+                            const fullMoves = parseInt(fenParts[5], 10);
+
+                            const whiteCard = document.getElementById("white-card");
+                            const blackCard = document.getElementById("black-card");
+
+                            if (whiteCard && blackCard) {
+                                whiteCard.classList.toggle("active-turn", currentTurn === "w");
+                                blackCard.classList.toggle("active-turn", currentTurn === "b");
+                            }
+
+                            if (elements.moveCount) {
+                                const halfMoves = (fullMoves - 1) * 2 + (currentTurn === "b" ? 1 : 0);
+                                elements.moveCount.textContent = halfMoves;
+                            }
+
+                            startClockTicker();
+                        }
+                    }
+
+                    const status = getStatusName(event.status ?? event.state?.status);
 
                     if (status && status !== "started") {
+                        stopClockTicker();
                         setStatus(`Game finished: ${status}`);
+                        document.querySelectorAll(".player-card").forEach(card => card.classList.remove("active-turn"));
                         return;
                     }
                 }
@@ -440,10 +450,10 @@ window.addEventListener("pagehide", () => {
     stopped = true;
     generation++;
 
+    stopClockTicker();
     clearTimeout(retryTimer);
     stopCurrentRequest();
 });
-
 
 function setupBoardAnnotations() {
     const container = elements.board;
@@ -509,6 +519,7 @@ function setupBoardAnnotations() {
             y: (8 - rank + 0.5) * 100
         };
     }
+
     function createArrow(from, to, isPreview = false) {
         const group = document.createElementNS(svgNS, "g");
 
@@ -522,19 +533,15 @@ function setupBoardAnnotations() {
         const ux = dx / length;
         const uy = dy / length;
 
-        // Größe der Pfeilspitze
         const headLength = 40;
         const headWidth = 25;
 
-        // Basis des Pfeilkopfes
         const baseX = to.x - ux * headLength;
         const baseY = to.y - uy * headLength;
 
-        // Senkrechter Vektor für die Breite des Dreiecks
         const px = -uy * headWidth;
         const py = ux * headWidth;
 
-        // Linie endet exakt an der Basis des Pfeilkopfes
         const line = document.createElementNS(svgNS, "line");
         line.setAttribute("x1", from.x);
         line.setAttribute("y1", from.y);
@@ -544,13 +551,10 @@ function setupBoardAnnotations() {
         line.setAttribute("stroke-width", "20");
         line.setAttribute("stroke-linecap", "round");
 
-        // Pfeilspitze mit der Spitze exakt auf to.x / to.y
         const head = document.createElementNS(svgNS, "polygon");
         head.setAttribute(
             "points",
-            `${to.x},${to.y} ` +
-            `${baseX + px},${baseY + py} ` +
-            `${baseX - px},${baseY - py}`
+            `${to.x},${to.y} ${baseX + px},${baseY + py} ${baseX - px},${baseY - py}`
         );
         head.setAttribute("fill", color);
 
@@ -615,6 +619,7 @@ function setupBoardAnnotations() {
         preview.dataset.preview = "true";
         svg.appendChild(preview);
     });
+
     container.addEventListener("pointerup", event => {
         if (event.button !== 2 || !startSquare) return;
 
@@ -627,7 +632,6 @@ function setupBoardAnnotations() {
 
         if (!to) return;
 
-        // Rechtsklick auf dasselbe Feld: Kreis umschalten
         if (from.name === to.name) {
             const key = `circle:${from.name}`;
             const existing = svg.querySelector(
@@ -645,7 +649,6 @@ function setupBoardAnnotations() {
             return;
         }
 
-        // Pfeil bereits vorhanden? Dann entfernen.
         const key = `arrow:${from.name}-${to.name}`;
         const existing = svg.querySelector(
             `[data-annotation-key="${key}"]`
@@ -657,5 +660,4 @@ function setupBoardAnnotations() {
             svg.appendChild(createArrow(from, to));
         }
     });
-
 }
