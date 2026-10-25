@@ -661,3 +661,4 @@ function setupBoardAnnotations() {
         }
     });
 }
+
